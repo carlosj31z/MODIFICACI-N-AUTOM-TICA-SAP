@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "SAP MM02 - Bloqueo de Materiales",
+  "version": "1.0.0",
+  "description": "Automatiza el llenado de campos en MM02 (SAP GUI for HTML embebido en Fiori) para bloqueo masivo de materiales, sin depender de Chromium externo ni ChromeDriver.",
+  "permissions": ["storage", "tabs", "webNavigation", "sidePanel"],
+  "host_permissions": ["https://fiori.medifarma.com.pe/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://fiori.medifarma.com.pe/*"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Abrir panel de automatización SAP MM02"
+  }
+}

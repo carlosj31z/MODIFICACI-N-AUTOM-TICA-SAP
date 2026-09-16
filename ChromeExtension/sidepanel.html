@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>SAP MM02 - Bloqueo de Materiales</title>
+<link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <h1>Bloqueo de materiales (MM02)</h1>
+
+  <section class="panel">
+    <button id="useActiveTabBtn">1. Usar pestaña activa de SAP</button>
+    <div id="tabInfo" class="tab-info">Ninguna pestaña seleccionada.</div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Cargar materiales</h2>
+    <label class="field">
+      Subir Excel (.xlsx) con columnas: Material, Centro, Transaccion, Vista, CampoTecnico, Valor
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+    </label>
+    <label class="field">
+      O pega filas copiadas de Excel (con encabezados en la primera línea):
+      <textarea id="pasteArea" rows="5" placeholder="Material	Centro	Transaccion	Vista	CampoTecnico	Valor
+123456	1000	MM02	Datos básicos 1	MSTAE	Z2"></textarea>
+    </label>
+    <button id="pasteBtn">Cargar desde texto pegado</button>
+  </section>
+
+  <section class="panel">
+    <h2>3. Ejecutar</h2>
+    <label class="checkbox">
+      <input type="checkbox" id="detenerCheckbox" />
+      Detener en el primer error
+    </label>
+    <div class="buttons">
+      <button id="startBtn">▶ Iniciar</button>
+      <button id="stopBtn">⏹ Detener</button>
+      <button id="retryBtn">↻ Reintentar errores</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Tareas (<span id="taskCount">0</span>)</h2>
+    <div class="table-wrap">
+      <table id="taskTable">
+        <thead>
+          <tr>
+            <th>Material</th><th>Centro</th><th>Vista</th><th>Campo</th><th>Valor</th><th>Estado</th><th>Mensaje</th>
+          </tr>
+        </thead>
+        <tbody id="taskBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Registro</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <script src="lib/xlsx.mini.min.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
