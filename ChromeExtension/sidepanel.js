@@ -5,15 +5,14 @@
 // SapAutomationService.cs original.
 
 const DEFAULT_TIMEOUT = 15000;
-const SHORT_TIMEOUT = 5000;
 const SAVE_TIMEOUT = 3000;
 const OPTIONAL_DIALOG_TIMEOUT = 1500;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Vistas válidas de MM02 (lista confirmada, ver comentario original en
-// ExcelService.cs). Se usan como opciones del desplegable "Vista" de la
-// grilla; si se pega/carga un texto que no calza exactamente, se agrega
+// ExcelService.cs). Se usan como opciones del desplegable "Vista" global de
+// la carga; si se pega/carga un texto que no calza exactamente, se agrega
 // como opción "personalizada" para no perder el dato.
 const SAP_VIEWS = [
   "Datos básicos 1",
@@ -48,6 +47,8 @@ const SAP_VIEWS = [
   "WM Packaging",
   "Datos de valoración segmento",
 ];
+
+const SAP_HOST = "fiori.medifarma.com.pe";
 
 // ---------------------------------------------------------------
 // Comunicación con los content scripts (broadcast a todos los frames de la
@@ -97,7 +98,7 @@ async function waitFor(tabId, message, timeoutMs, stepMs = 300) {
 // ---------------------------------------------------------------
 
 async function navigateToMM02(tabId, log) {
-  let res = await waitFor(tabId, { type: "CLICK_TILE" }, SHORT_TIMEOUT);
+  let res = await waitFor(tabId, { type: "CLICK_TILE" }, 5000);
   if (res.ok) {
     log("Tile 'Modificar material' (MM02) localizado. Abriendo...");
     await sleep(700);
@@ -144,7 +145,7 @@ async function switchToViewTab(tabId, vista) {
 async function fillSapField(tabId, campoTecnico, valor, log) {
   // Vistas como "Clasificación" hacen un viaje al servidor para cargar la
   // tabla de características (más lento que un campo normal), por eso se usa
-  // el timeout largo aquí en vez de SHORT_TIMEOUT.
+  // el timeout largo (igual que localizar el campo Material).
   const res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, DEFAULT_TIMEOUT);
   if (res.ok) {
     await sleep(400);
@@ -289,21 +290,26 @@ async function runAutomation(tasks, tabId, detenerEnPrimerError, ui) {
 }
 
 // ---------------------------------------------------------------
-// Grilla editable: filas con celdas (Material, Centro, Transacción fija,
-// Vista desplegable, Campo técnico, Valor) + columnas de solo lectura
-// (Estado, Mensaje) que se actualizan en vivo durante la ejecución.
+// Grilla editable: solo Material, Centro, Valor por fila (Transacción,
+// Vista y Campo técnico son una configuración única que aplica a todas las
+// filas, ver sección 1 del panel). Estado/Mensaje son de solo lectura y se
+// actualizan en vivo durante la ejecución.
 // ---------------------------------------------------------------
 
-const COLUMN_KEYS = ["material", "centro", "transaccion", "vista", "campoTecnico", "valor"];
+const COLUMN_KEYS = ["material", "centro", "valor"];
 
+// Incluye también los nombres del formato histórico de 6 columnas
+// (Transaccion/Vista/CampoTecnico) solo para poder reconocer y descartar
+// esa fila de encabezado al pegar/subir un Excel viejo; esos valores ya no
+// se usan por fila (ver sección 1: Vista y Campo técnico son globales).
 const HEADER_ALIASES = {
   material: "material",
   centro: "centro",
+  valor: "valor",
   transaccion: "transaccion",
   vista: "vista",
   campotecnico: "campoTecnico",
   campo: "campoTecnico",
-  valor: "valor",
 };
 
 function normalizeHeader(h) {
@@ -322,8 +328,10 @@ function isHeaderRow(cells) {
 }
 
 const els = {
-  useActiveTabBtn: document.getElementById("useActiveTabBtn"),
+  reloadExtBtn: document.getElementById("reloadExtBtn"),
   tabInfo: document.getElementById("tabInfo"),
+  globalVista: document.getElementById("globalVista"),
+  globalCampoTecnico: document.getElementById("globalCampoTecnico"),
   fileInput: document.getElementById("fileInput"),
   addRowBtn: document.getElementById("addRowBtn"),
   clearGridBtn: document.getElementById("clearGridBtn"),
@@ -336,7 +344,6 @@ const els = {
 };
 
 const state = {
-  tabId: null,
   stopFlag: false,
 };
 
@@ -346,38 +353,74 @@ function log(text) {
   els.log.scrollTop = els.log.scrollHeight;
 }
 
-function buildVistaSelect() {
-  const select = document.createElement("select");
-  select.dataset.col = "vista";
+// ---------------------------------------------------------------
+// Pestaña activa de SAP: se detecta sola, sin que el usuario tenga que
+// hacer click en ningún botón. Se muestra en vivo y se vuelve a resolver
+// justo al iniciar/reintentar, así siempre usa la pestaña que esté activa
+// en ese momento.
+// ---------------------------------------------------------------
+
+async function getActiveSapTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
+function describeTab(tab) {
+  if (!tab) {
+    els.tabInfo.textContent = "No se detecta ninguna pestaña activa.";
+    els.tabInfo.className = "tab-info tab-missing";
+    return;
+  }
+  const esSap = tab.url && tab.url.includes(SAP_HOST);
+  els.tabInfo.textContent = `Pestaña activa: ${tab.title || "(sin título)"} — ${tab.url || ""}`;
+  els.tabInfo.className = "tab-info" + (esSap ? "" : " tab-warning");
+  if (!esSap) {
+    els.tabInfo.textContent += " ⚠️ No parece ser Fiori/SAP.";
+  }
+}
+
+chrome.tabs.onActivated.addListener(async () => describeTab(await getActiveSapTab()));
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status !== "complete" && !changeInfo.url) return;
+  const active = await getActiveSapTab();
+  if (active && active.id === tabId) describeTab(active);
+});
+getActiveSapTab().then(describeTab);
+
+// ---------------------------------------------------------------
+// Vista desplegable global
+// ---------------------------------------------------------------
+
+function initGlobalVistaSelect() {
   const blank = document.createElement("option");
   blank.value = "";
   blank.textContent = "-- Selecciona vista --";
-  select.appendChild(blank);
+  els.globalVista.appendChild(blank);
   for (const v of SAP_VIEWS) {
     const opt = document.createElement("option");
     opt.value = v;
     opt.textContent = v;
-    select.appendChild(opt);
+    els.globalVista.appendChild(opt);
   }
-  return select;
 }
 
-function setVistaValue(select, rawValue) {
+function setGlobalVistaValue(rawValue) {
   const val = String(rawValue || "").trim();
-  if (!val) {
-    select.value = "";
-    return;
-  }
+  if (!val) return;
   const norm = normalizeHeader(val);
-  let match = Array.from(select.options).find((o) => normalizeHeader(o.value) === norm);
+  let match = Array.from(els.globalVista.options).find((o) => normalizeHeader(o.value) === norm);
   if (!match) {
     match = document.createElement("option");
     match.value = val;
     match.textContent = `${val} (personalizada)`;
-    select.appendChild(match);
+    els.globalVista.appendChild(match);
   }
-  select.value = match.value;
+  els.globalVista.value = match.value;
 }
+
+// ---------------------------------------------------------------
+// Grilla
+// ---------------------------------------------------------------
 
 function makeTextInput(colKey) {
   const input = document.createElement("input");
@@ -414,24 +457,6 @@ function addRow(initial = {}) {
   tdCentro.appendChild(inputCentro);
   tr.appendChild(tdCentro);
 
-  const tdTransaccion = document.createElement("td");
-  tdTransaccion.className = "transaccion-cell";
-  tdTransaccion.textContent = "MM02";
-  tr.appendChild(tdTransaccion);
-
-  const tdVista = document.createElement("td");
-  const selectVista = buildVistaSelect();
-  selectVista.addEventListener("paste", onCellPaste);
-  setVistaValue(selectVista, initial.vista || "");
-  tdVista.appendChild(selectVista);
-  tr.appendChild(tdVista);
-
-  const tdCampo = document.createElement("td");
-  const inputCampo = makeTextInput("campoTecnico");
-  inputCampo.value = initial.campoTecnico || "";
-  tdCampo.appendChild(inputCampo);
-  tr.appendChild(tdCampo);
-
   const tdValor = document.createElement("td");
   const inputValor = makeTextInput("valor");
   inputValor.value = initial.valor || "";
@@ -459,16 +484,11 @@ function ensureRowExists(index) {
 
 function setCellValue(rowIndex, key, value) {
   const tr = ensureRowExists(rowIndex);
-  if (key === "transaccion") return; // siempre MM02, se ignora lo pegado
-  if (key === "vista") {
-    setVistaValue(tr.querySelector('[data-col="vista"]'), value);
-    return;
-  }
   const input = tr.querySelector(`[data-col="${key}"]`);
   if (input) input.value = String(value ?? "").trim();
 }
 
-/** Pegado tipo hoja de cálculo: distribuye filas/columnas desde la celda con foco. */
+/** Pegado tipo hoja de cálculo: distribuye filas/columnas (Material, Centro, Valor) desde la celda con foco. */
 function onCellPaste(e) {
   const text = (e.clipboardData || window.clipboardData).getData("text");
   if (!text || !/[\t\r\n]/.test(text)) return; // valor simple: dejar que el navegador pegue normal
@@ -500,6 +520,8 @@ function onCellPaste(e) {
 }
 
 function collectTasksFromGrid() {
+  const vista = els.globalVista.value.trim();
+  const campoTecnico = els.globalCampoTecnico.value.trim();
   const tasks = [];
   for (const tr of Array.from(els.gridBody.children)) {
     const material = tr.querySelector('[data-col="material"]').value.trim();
@@ -509,8 +531,8 @@ function collectTasksFromGrid() {
       material,
       centro: tr.querySelector('[data-col="centro"]').value.trim(),
       transaccion: "MM02",
-      vista: tr.querySelector('[data-col="vista"]').value.trim(),
-      campoTecnico: tr.querySelector('[data-col="campoTecnico"]').value.trim(),
+      vista,
+      campoTecnico,
       valor: tr.querySelector('[data-col="valor"]').value.trim(),
       estado: tr.dataset.estado,
       mensaje: tr.dataset.mensaje || "",
@@ -538,25 +560,17 @@ function setControlsEnabled(enabled) {
   els.addRowBtn.disabled = !enabled;
   els.clearGridBtn.disabled = !enabled;
   els.fileInput.disabled = !enabled;
+  els.globalVista.disabled = !enabled;
+  els.globalCampoTecnico.disabled = !enabled;
 }
 
 // ---------------------------------------------------------------
 // Eventos de UI
 // ---------------------------------------------------------------
 
-els.useActiveTabBtn.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    log("No se pudo obtener la pestaña activa.");
-    return;
-  }
-  state.tabId = tab.id;
-  els.tabInfo.textContent = `Pestaña: ${tab.title || "(sin título)"} — ${tab.url || ""}`;
-  if (!tab.url || !tab.url.includes("fiori.medifarma.com.pe")) {
-    log("⚠️ Aviso: la pestaña activa no parece ser la de Fiori/SAP (fiori.medifarma.com.pe). Verifica antes de iniciar.");
-  } else {
-    log("Pestaña de SAP seleccionada.");
-  }
+els.reloadExtBtn.addEventListener("click", () => {
+  log("Recargando extensión (recuerda refrescar también la pestaña de SAP para que tome los cambios)...");
+  chrome.runtime.reload();
 });
 
 els.addRowBtn.addEventListener("click", () => addRow());
@@ -579,23 +593,31 @@ els.fileInput.addEventListener("change", async (e) => {
       log(`El archivo "${file.name}" no tiene filas.`);
       return;
     }
+    // Compatible con el formato histórico de 6 columnas
+    // (Material, Centro, Transaccion, Vista, CampoTecnico, Valor): la Vista
+    // y el CampoTecnico de la primera fila con datos rellenan la
+    // configuración global (si está vacía); el resto de columnas se ignora.
     let rows = matrix;
     if (isHeaderRow(matrix[0])) rows = matrix.slice(1);
 
     els.gridBody.innerHTML = "";
     let count = 0;
+    let vistaFromFile = "";
+    let campoFromFile = "";
     for (const row of rows) {
       if (!row || row.every((c) => String(c ?? "").trim() === "")) continue;
+      if (!vistaFromFile) vistaFromFile = String(row[3] ?? "").trim();
+      if (!campoFromFile) campoFromFile = String(row[4] ?? "").trim();
       addRow({
         material: row[0],
         centro: row[1],
-        vista: row[3],
-        campoTecnico: row[4],
-        valor: row[5],
+        valor: row[5] !== undefined ? row[5] : row[2],
       });
       count++;
     }
     if (count === 0) addRow();
+    if (!els.globalVista.value && vistaFromFile) setGlobalVistaValue(vistaFromFile);
+    if (!els.globalCampoTecnico.value && campoFromFile) els.globalCampoTecnico.value = campoFromFile;
     log(`${count} fila(s) cargada(s) desde "${file.name}".`);
   } catch (err) {
     log(`ERROR al leer el Excel: ${err.message}`);
@@ -605,18 +627,30 @@ els.fileInput.addEventListener("change", async (e) => {
 });
 
 async function startRun(tasks) {
-  if (!state.tabId) {
-    log("Primero selecciona la pestaña activa de SAP (paso 1).");
+  const vista = els.globalVista.value.trim();
+  const campoTecnico = els.globalCampoTecnico.value.trim();
+  if (!vista || !campoTecnico) {
+    log("Completa la Vista y el Campo técnico (paso 1) antes de iniciar — aplican a todas las filas.");
     return;
   }
   if (tasks.length === 0) {
     log("No hay materiales con la columna 'Material' completa en la tabla.");
     return;
   }
+  const tab = await getActiveSapTab();
+  if (!tab) {
+    log("No se detecta ninguna pestaña activa. Abre/enfoca la pestaña de SAP e inténtalo de nuevo.");
+    return;
+  }
+  describeTab(tab);
+  if (!tab.url || !tab.url.includes(SAP_HOST)) {
+    log("⚠️ Aviso: la pestaña activa no parece ser la de Fiori/SAP. Verifica antes de continuar.");
+  }
+
   state.stopFlag = false;
   setControlsEnabled(false);
   try {
-    await runAutomation(tasks, state.tabId, els.detenerCheckbox.checked, {
+    await runAutomation(tasks, tab.id, els.detenerCheckbox.checked, {
       log,
       setEstado,
       stopRequested: () => state.stopFlag,
@@ -654,5 +688,6 @@ els.retryBtn.addEventListener("click", () => {
   startRun(tasks);
 });
 
+initGlobalVistaSelect();
 for (let i = 0; i < 6; i++) addRow();
-log("Panel listo. Selecciona la pestaña de SAP y completa la tabla de materiales.");
+log("Panel listo. Completa la Vista y el Campo técnico, y la tabla de materiales.");

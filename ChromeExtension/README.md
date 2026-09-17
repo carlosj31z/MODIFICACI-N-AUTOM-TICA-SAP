@@ -23,37 +23,56 @@ sin pasar por la Chrome Web Store pública.
 
 ## Uso
 
-1. Abre en una pestaña `https://fiori.medifarma.com.pe/sap/bc/ui2/flp?sap-client=300&sap-language=ES` y entra normalmente (SSO/credenciales).
+1. Abre en una pestaña `https://fiori.medifarma.com.pe/sap/bc/ui2/flp?sap-client=300&sap-language=ES` y entra normalmente (SSO/credenciales). No hace falta seleccionarla a mano: el panel detecta sola cuál es tu pestaña activa cada vez que le das a Iniciar/Reintentar (arriba del todo te muestra cuál detectó, con una advertencia si no parece ser Fiori/SAP).
 2. Abre el side panel de la extensión.
-3. Paso 1: click "Usar pestaña activa de SAP" con esa pestaña como pestaña activa/enfocada.
-4. Paso 2: llena la tabla de materiales — es una grilla editable, no un formulario a ciegas:
-   - **Material, Centro, Campo técnico, Valor**: celdas de texto libre.
+3. Paso 1 — **Configuración de esta carga** (aplica a *todas* las filas de la tabla, se define una sola vez):
+   - **Vista**: lista desplegable con las vistas válidas de MM02 (si pegas/subes un texto que no calza exactamente con ninguna, se agrega como opción "(personalizada)").
+   - **Campo técnico**: el campo SAP que vas a tocar (ej. `MSTAE`, `EVENTO`).
    - **Transacción**: fija en `MM02`, no se edita.
-   - **Vista**: lista desplegable con las vistas válidas de MM02 (si pegas/subes un texto que no calza exactamente con ninguna, se agrega como opción "(personalizada)" para no perder el dato).
+4. Paso 2 — llena la tabla de materiales (grilla editable, no un formulario a ciegas). Cada fila es solo **Material, Centro, Valor**:
    - **Valor vacío**: dejar la celda vacía borra ese campo en SAP (el placeholder gris "(vacío → se borrará en SAP)" te lo recuerda mientras la celda esté vacía).
-   - Puedes: escribir directo en las celdas, pegar filas completas copiadas de Excel (haz click en la celda "Material" de la fila donde quieres pegar y usa Ctrl+V — reparte automáticamente columnas y filas, como en una hoja de cálculo; si la primera fila pegada son encabezados, se descarta sola), o cargar un `.xlsx` con el botón "📎 Cargar Excel" (mismas columnas que usabas: Material, Centro, Transaccion, Vista, CampoTecnico, Valor — la columna Transacción del archivo se ignora, siempre queda MM02).
+   - Puedes: escribir directo en las celdas, pegar filas completas copiadas de Excel — **solo Material, Centro y Valor, en ese orden** (haz click en la celda "Material" de la fila donde quieres pegar y usa Ctrl+V; reparte automáticamente columnas y filas, como en una hoja de cálculo; si la primera fila pegada son encabezados, se descarta sola), o cargar un `.xlsx` con el botón "📎 Cargar Excel" (acepta tanto un archivo de 3 columnas como tu formato histórico de 6: Material, Centro, Transaccion, Vista, CampoTecnico, Valor — si usas el de 6 columnas, la Vista/Campo técnico de la primera fila rellenan automáticamente el paso 1 si los dejaste vacíos, y Transacción se ignora).
    - "+ Agregar fila" / "✕" por fila / "🗑 Vaciar tabla" para gestionar filas sueltas.
 5. Paso 3: click "Iniciar". El panel va llenando MM02 material por material, agrupando filas contiguas del mismo material (igual que la app de escritorio), y graba una vez por material.
 6. Si algo falla, la fila queda en rojo con "Error" y el mensaje de diagnóstico en la columna Mensaje; corrige lo necesario directo en la celda y usa "Reintentar errores" para reprocesar solo esas filas (respeta lo que hayas corregido en la tabla, no repite el valor viejo).
 
-### Ejemplo de fila para bloqueo de material (MSTAE)
+### Ejemplo para bloqueo de material (MSTAE)
 
-| Material | Centro | Transaccion | Vista | CampoTecnico | Valor |
-|---|---|---|---|---|---|
-| 123456 | 1000 | MM02 | Datos básicos 1 | MSTAE | Z2 |
+Paso 1: Vista = `Datos básicos 1`, Campo técnico = `MSTAE`. Tabla:
 
-### Ejemplo de fila para una característica de Clasificación (p.ej. EVENTO)
+| Material | Centro | Valor |
+|---|---|---|
+| 123456 | 1000 | Z2 |
+
+### Ejemplo para una característica de Clasificación (p.ej. EVENTO)
 
 La vista "Clasificación" no tiene campos sueltos, sino una tabla de
 características (etiqueta + valor). El bot busca la fila cuya etiqueta
-coincide con `CampoTecnico` (tal como se ve en la columna "Denom.
-característica") y llena el `Valor` de esa fila:
+coincide con el Campo técnico del paso 1 (tal como se ve en la columna
+"Denom. característica") y llena el Valor de esa fila.
 
-| Material | Centro | Transaccion | Vista | CampoTecnico | Valor |
-|---|---|---|---|---|---|
-| 6000003298 |  | MM02 | Clasificación | EVENTO | CAT3 |
+Paso 1: Vista = `Clasificación`, Campo técnico = `EVENTO`. Tabla:
+
+| Material | Centro | Valor |
+|---|---|---|
+| 6000003298 |  | CAT3 |
 
 No necesita `Centro` porque Clasificación es una vista general del material.
+
+## Actualizar la extensión tras un cambio de código
+
+Chrome no vigila la carpeta en disco de una extensión "sin empaquetar", así
+que no hay una forma verdaderamente automática de que se recargue sola al
+hacer `git pull`. Pero nunca hace falta eliminarla y volver a cargarla:
+
+1. `git pull` (o baja el ZIP de nuevo) en la misma carpeta.
+2. Click en el botón 🔄 (arriba a la derecha del panel) — llama a
+   `chrome.runtime.reload()`, o si prefieres, el ícono de recargar ⟳ en la
+   tarjeta de la extensión dentro de `chrome://extensions`. Cualquiera de
+   los dos recarga `background.js`/`content.js`/`sidepanel.js` desde disco.
+3. Refresca (F5) la pestaña de SAP para que tome el `content.js` actualizado
+   ahí también (una extensión recargada no reemplaza sola los content
+   scripts ya inyectados en pestañas abiertas).
 
 ## Arquitectura
 
