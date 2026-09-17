@@ -142,7 +142,10 @@ async function switchToViewTab(tabId, vista) {
 }
 
 async function fillSapField(tabId, campoTecnico, valor, log) {
-  const res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, SHORT_TIMEOUT);
+  // Vistas como "Clasificación" hacen un viaje al servidor para cargar la
+  // tabla de características (más lento que un campo normal), por eso se usa
+  // el timeout largo aquí en vez de SHORT_TIMEOUT.
+  const res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, DEFAULT_TIMEOUT);
   if (res.ok) {
     await sleep(400);
     return true;
