@@ -124,6 +124,22 @@ const STATUS_SELECTORS = [
   { type: "xpath", value: "//div[contains(@class,'urMessageBar')]" },
 ];
 
+/**
+ * Botón "Posicionar" (lupa) de la tabla de características de
+ * Clasificación: confirmado por inspección real, su data-hint incluye el
+ * campo técnico RCTMS-AUFS (fijo, no depende de la característica que se
+ * busque). Abre un diálogo "Posicionar sobre caract." que salta el cursor
+ * directo a la fila pedida — mucho más confiable que navegar con flechas.
+ */
+const POSICIONAR_BUTTON_SELECTORS = [
+  { type: "xpath", value: "//*[contains(@data-hint, 'RCTMS-AUFS')]" },
+  { type: "xpath", value: "//*[@role='button'][contains(@title, 'Posicionar')]" },
+];
+
+const CONTINUAR_BUTTON_SELECTORS = [
+  { type: "xpath", value: "//*[contains(@title, 'Continuar') or contains(@title, 'Enter')]" },
+];
+
 function fieldSelectors(campoTecnico) {
   const lit = xpathLiteral(campoTecnico);
   const cssPart = CSS.escape(campoTecnico);
@@ -171,20 +187,65 @@ function findRowInputFor(labelText) {
 }
 
 /**
+ * Usa el botón nativo "Posicionar" (lupa) de la tabla de características
+ * para saltar directo a la fila pedida, en vez de navegar a ciegas. El
+ * diálogo "Posicionar sobre caract." suele enfocar y preseleccionar
+ * automáticamente su campo de texto al abrirse (confirmado visualmente),
+ * así que se escribe sobre document.activeElement; si por algún motivo no
+ * quedó enfocado ahí, se busca cerca del texto "Característica" como
+ * respaldo.
+ */
+async function tryPositionSearch(labelText) {
+  const btn = findFirstVisible(POSICIONAR_BUTTON_SELECTORS);
+  if (!btn) return false;
+  btn.click();
+  await delay(500);
+
+  let input = document.activeElement && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
+  if (!input) {
+    const labelEl = findLabelElement("Característica/Valor") || findLabelElement("Característica");
+    const container = labelEl && (labelEl.closest("div") || labelEl.parentElement);
+    input = container ? container.querySelector("input[type='text']") : null;
+  }
+  if (!input) return false;
+
+  fillAndCommit(input, labelText, null); // solo escribir, el commit lo hace "Continuar"
+  await delay(200);
+
+  const continuar = findFirstVisible(CONTINUAR_BUTTON_SELECTORS);
+  if (continuar) continuar.click();
+  else dispatchKey(input, "Enter", 13);
+
+  await delay(700);
+  return true;
+}
+
+/**
  * La tabla de características de "Clasificación" es virtualizada: SAP solo
  * crea en el DOM las filas que están dentro del área visible, y —
  * confirmado por pruebas reales — SOLO la fila con el foco de teclado real
  * tiene un <input> editable; el resto de filas visibles muestran su valor
- * como texto plano. Este control puede tener más de una barra de scroll en
- * pantalla, así que en vez de adivinar cuál <div> es el contenedor "real"
- * con scroll nativo, se navega con flecha abajo — igual que haría una
- * persona —, siguiendo en cada paso el foco real que SAP mueve
- * (document.activeElement), no una referencia vieja al elemento inicial.
+ * como texto plano. Se intenta primero el botón "Posicionar" (rápido y
+ * confiable); si no existe o no funciona, se navega con flecha abajo —
+ * igual que haría una persona —, siguiendo en cada paso el foco real que
+ * SAP mueve (document.activeElement), no una referencia vieja.
  */
 async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepDelay = 150) {
   let found = findRowInputFor(labelText);
   if (found) return found;
 
+  if (await tryPositionSearch(labelText)) {
+    found = findRowInputFor(labelText);
+    if (found) return found;
+    for (let i = 0; i < 5; i++) {
+      await delay(150);
+      found = findRowInputFor(labelText);
+      if (found) return found;
+    }
+  }
+
+  // Respaldo: navegación con flecha abajo si el botón "Posicionar" no
+  // existe o no funcionó.
   // Ancla: cualquier fila de la tabla de características ya renderizada
   // (confirmado por inspección real: estas filas llevan el atributo iidx).
   let anchorRow = document.querySelector("tr[iidx]");
