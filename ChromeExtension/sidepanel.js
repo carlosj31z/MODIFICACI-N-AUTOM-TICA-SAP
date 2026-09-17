@@ -49,6 +49,8 @@ const SAP_VIEWS = [
 ];
 
 const SAP_HOST = "fiori.medifarma.com.pe";
+const DEFAULT_SAP_URL =
+  "https://fiori.medifarma.com.pe/sap/bc/ui2/flp?sap-client=300&sap-language=ES#Material-change?sap-ui-tech-hint=GUI";
 
 // ---------------------------------------------------------------
 // Comunicación con los content scripts (broadcast a todos los frames de la
@@ -168,7 +170,7 @@ async function waitForStatusMessage(tabId, timeoutMs) {
     if (res.ok && res.text) return { ok: !res.isError, message: res.text };
     await sleep(400);
   } while (Date.now() < deadline);
-  return { ok: true, message: "Guardado (sin confirmación de barra de estado)" };
+  return { ok: true, message: "Exitoso" };
 }
 
 async function saveTransaction(tabId, log) {
@@ -181,16 +183,18 @@ async function saveTransaction(tabId, log) {
   return await waitForStatusMessage(tabId, SAVE_TIMEOUT);
 }
 
+/**
+ * Ante un error, regresa directo a la pantalla inicial de MM02 navegando la
+ * pestaña a la URL (más confiable que adivinar cuántos Escape hacen falta o
+ * si el botón Home está visible): deja la sesión en un estado conocido para
+ * el siguiente material, sin arrastrar el error.
+ */
 async function safeAbortAndReturnHome(tabId, log) {
   try {
-    await broadcastOnce(tabId, { type: "ESCAPE" });
-    await sleep(400);
-    await broadcastOnce(tabId, { type: "ESCAPE" });
-    await sleep(400);
-    await broadcastOnce(tabId, { type: "CLICK_HOME" });
-    await sleep(800);
+    await chrome.tabs.update(tabId, { url: DEFAULT_SAP_URL });
+    await sleep(1500);
   } catch (e) {
-    log(`Aviso: no se pudo recuperar automáticamente la sesión (${e.message}). Verifique el estado de la pestaña.`);
+    log(`Aviso: no se pudo regresar a la pantalla inicial (${e.message}). Verifique el estado de la pestaña.`);
   }
 }
 

@@ -91,10 +91,25 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
   margin: 0 0 8px;
   line-height: 1.4;
 }
+.hint-compact {
+  font-size: 10px;
+  color: #888;
+  margin-bottom: 6px;
+}
 
 .checkbox { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 
 .buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+
+.execute-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.execute-row .checkbox { margin-bottom: 0; }
+.execute-row .buttons-inline { margin-bottom: 0; justify-content: center; }
 
 button, .file-label {
   cursor: pointer;

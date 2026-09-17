@@ -2,12 +2,13 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>SAP MM02 - Bloqueo de Materiales</title>
+<title>Modificar material</title>
+<link rel="icon" href="icons/icon32.png" />
 <link rel="stylesheet" href="sidepanel.css" />
 </head>
 <body>
   <div class="title-row">
-    <h1>Bloqueo de materiales (MM02)</h1>
+    <h1>Modificar material</h1>
     <button id="reloadExtBtn" class="reload-btn" title="Recargar extensión (después de un git pull). Recuerda refrescar también la pestaña de SAP.">🔄</button>
   </div>
 
@@ -35,10 +36,9 @@
 
   <section class="panel">
     <h2>2. Materiales a procesar</h2>
-    <p class="hint-text">
-      Pega filas copiadas de Excel directo sobre la tabla (haz click en una celda "Material" y pega —
-      solo Material, Centro y Valor, en ese orden), edítalas a mano, o carga un .xlsx.
-      Si dejas <strong>Valor</strong> vacío, ese campo se borrará en SAP.
+    <p class="hint-text hint-compact">
+      Pega filas de Excel (Material, Centro, Valor), edítalas a mano, o carga un .xlsx.
+      Valor vacío = se borra en SAP.
     </p>
     <div class="buttons">
       <button id="addRowBtn">+ Agregar fila</button>
@@ -65,14 +65,16 @@
 
   <section class="panel">
     <h2>3. Ejecutar</h2>
-    <label class="checkbox">
-      <input type="checkbox" id="detenerCheckbox" />
-      Detener en el primer error
-    </label>
-    <div class="buttons">
-      <button id="startBtn">▶ Iniciar</button>
-      <button id="stopBtn">⏹ Detener</button>
-      <button id="retryBtn">↻ Reintentar errores</button>
+    <div class="execute-row">
+      <label class="checkbox">
+        <input type="checkbox" id="detenerCheckbox" />
+        Detener en el primer error
+      </label>
+      <div class="buttons buttons-inline">
+        <button id="startBtn">▶ Iniciar</button>
+        <button id="stopBtn">⏹ Detener</button>
+        <button id="retryBtn">↻ Reintentar errores</button>
+      </div>
     </div>
   </section>
 
