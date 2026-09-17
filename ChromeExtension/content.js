@@ -165,7 +165,18 @@ function findClassificationValueInput(labelText) {
   const inputs = Array.from(row.querySelectorAll("input")).filter(
     (i) => isVisible(i) && !i.disabled && i.type !== "checkbox"
   );
-  return inputs[0] || null;
+  if (inputs[0]) return inputs[0];
+  // La tabla de Clasificación es virtualizada: SAP solo materializa el
+  // <input> real de las filas visibles en el scroll. Si la etiqueta ya
+  // apareció pero su fila todavía no tiene input, forzar el scroll para que
+  // SAP la renderice — el intento siguiente (sidepanel.js reintenta cada
+  // 300ms) debería encontrarla ya lista.
+  try {
+    row.scrollIntoView({ block: "center", behavior: "instant" });
+  } catch {
+    labelEl.scrollIntoView({ block: "center" });
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------
