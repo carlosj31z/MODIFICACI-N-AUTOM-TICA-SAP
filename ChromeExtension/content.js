@@ -136,7 +136,13 @@ const POSICIONAR_BUTTON_SELECTORS = [
   { type: "xpath", value: "//*[@role='button'][contains(@title, 'Posicionar')]" },
 ];
 
+// Confirmado por inspección real: el botón "Continuar (Entrada)" del
+// diálogo "Posicionar sobre caract." dispara su acción vía
+// lsevents.Press → "GuiOkCodeButton" (mecanismo genérico de SAP GUI para el
+// botón de confirmar/Entrada de un popup) — más específico y estable que
+// buscar solo por el texto del título.
 const CONTINUAR_BUTTON_SELECTORS = [
+  { type: "xpath", value: "//*[contains(@lsevents, 'GuiOkCodeButton')]" },
   { type: "xpath", value: "//*[contains(@title, 'Continuar') or contains(@title, 'Enter')]" },
 ];
 
@@ -197,7 +203,7 @@ function findRowInputFor(labelText) {
  */
 async function tryPositionSearch(labelText) {
   const btn = findFirstVisible(POSICIONAR_BUTTON_SELECTORS);
-  if (!btn) return false;
+  if (!btn) return { ok: false, trace: "Posicionar: botón (lupa) no encontrado." };
   btn.click();
   await delay(500);
 
@@ -207,7 +213,7 @@ async function tryPositionSearch(labelText) {
     const container = labelEl && (labelEl.closest("div") || labelEl.parentElement);
     input = container ? container.querySelector("input[type='text']") : null;
   }
-  if (!input) return false;
+  if (!input) return { ok: false, trace: "Posicionar: se abrió el diálogo pero no se encontró su campo de texto." };
 
   fillAndCommit(input, labelText, null); // solo escribir, el commit lo hace "Continuar"
   await delay(200);
@@ -217,7 +223,10 @@ async function tryPositionSearch(labelText) {
   else dispatchKey(input, "Enter", 13);
 
   await delay(700);
-  return true;
+  return {
+    ok: true,
+    trace: `Posicionar: escribió '${labelText}' y ${continuar ? "clicó Continuar" : "presionó Enter (no se encontró el botón Continuar)"}.`,
+  };
 }
 
 /**
@@ -231,21 +240,26 @@ async function tryPositionSearch(labelText) {
  * SAP mueve (document.activeElement), no una referencia vieja.
  */
 async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepDelay = 150) {
+  const trace = [];
   let found = findRowInputFor(labelText);
-  if (found) return found;
+  if (found) return { input: found, trace };
 
-  if (await tryPositionSearch(labelText)) {
+  const posResult = await tryPositionSearch(labelText);
+  trace.push(posResult.trace);
+  if (posResult.ok) {
     found = findRowInputFor(labelText);
-    if (found) return found;
+    if (found) return { input: found, trace };
     for (let i = 0; i < 5; i++) {
       await delay(150);
       found = findRowInputFor(labelText);
-      if (found) return found;
+      if (found) return { input: found, trace };
     }
+    trace.push("Posicionar: se ejecutó pero la fila sigue sin <input> editable después de esperar.");
   }
 
   // Respaldo: navegación con flecha abajo si el botón "Posicionar" no
   // existe o no funcionó.
+  trace.push("Respaldo: navegando con flecha abajo...");
   // Ancla: cualquier fila de la tabla de características ya renderizada
   // (confirmado por inspección real: estas filas llevan el atributo iidx).
   let anchorRow = document.querySelector("tr[iidx]");
@@ -253,7 +267,7 @@ async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepD
     await delay(200);
     anchorRow = document.querySelector("tr[iidx]");
   }
-  if (!anchorRow) return null;
+  if (!anchorRow) return { input: null, trace };
 
   let focusTarget = anchorRow.querySelector("input, [tabindex]") || anchorRow;
   try {
@@ -266,7 +280,7 @@ async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepD
 
   for (let i = 0; i < maxSteps; i++) {
     found = findRowInputFor(labelText);
-    if (found) return found;
+    if (found) return { input: found, trace };
     dispatchKey(focusTarget, "ArrowDown", 40);
     await delay(stepDelay);
     // Seguir el foco real que SAP haya movido, no quedarse en la
@@ -275,7 +289,7 @@ async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepD
       focusTarget = document.activeElement;
     }
   }
-  return findRowInputFor(labelText);
+  return { input: findRowInputFor(labelText), trace };
 }
 
 // ---------------------------------------------------------------
@@ -356,20 +370,22 @@ async function handleMessage(msg, sendResponse) {
       }
       // No es un <input> con data-hint/lsdata/title/id reconocible (p.ej.
       // campos normales de MM02); probar como fila de tabla de
-      // características (vista "Clasificación"), incluyendo scroll a
-      // ciegas si la fila todavía no está renderizada.
-      const rowInput = await findClassificationValueInputAsync(msg.campoTecnico);
+      // características (vista "Clasificación"): botón "Posicionar" y, si
+      // no funciona, navegación con flecha abajo.
+      const { input: rowInput, trace } = await findClassificationValueInputAsync(msg.campoTecnico);
       if (rowInput) {
         fillAndCommit(rowInput, msg.valor, "Tab");
         sendResponse({ ok: true });
         break;
       }
       // Diagnóstico: cuántas coincidencias hay para el selector principal
-      // (aunque no sean usables), para depurar sin abrir DevTools.
+      // (aunque no sean usables), más la traza de lo que se intentó en la
+      // tabla de características, para depurar sin abrir DevTools.
       const primary = selectors[0];
       const diagnostics = nodesFor(primary).map(
         (n) => `id='${n.id || ""}' Displayed=${isVisible(n)} Enabled=${!n.disabled}`
       );
+      diagnostics.push(...trace);
       const labelEl = findLabelElement(msg.campoTecnico);
       diagnostics.push(
         labelEl
