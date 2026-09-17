@@ -159,20 +159,31 @@ function findLabelElement(labelText) {
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function findRowInputFor(labelText) {
+  const labelEl = findLabelElement(labelText);
+  if (!labelEl) return null;
+  const row = findRowContainer(labelEl);
+  if (!row) return null;
+  const inputs = Array.from(row.querySelectorAll("input")).filter(
+    (n) => isVisible(n) && !n.disabled && n.type !== "checkbox"
+  );
+  return inputs[0] || null;
+}
+
 /**
  * La tabla de características de "Clasificación" es virtualizada: SAP solo
- * crea en el DOM las filas (etiqueta + input) que están dentro del área
- * visible — ni siquiera la etiqueta existe hasta que se llega ahí. Este
- * control puede tener más de una barra de scroll en pantalla (la del panel
- * general y la de la tabla), así que en vez de adivinar cuál <div> es el
- * contenedor "real" con scroll nativo, se navega con teclado (flecha abajo)
- * sobre la celda enfocada — igual que haría una persona —, dejando que SAP
- * mismo decida cómo traer la fila a la vista, sin importar cómo esté
- * implementado el scroll por dentro.
+ * crea en el DOM las filas que están dentro del área visible, y —
+ * confirmado por pruebas reales — SOLO la fila con el foco de teclado real
+ * tiene un <input> editable; el resto de filas visibles muestran su valor
+ * como texto plano. Este control puede tener más de una barra de scroll en
+ * pantalla, así que en vez de adivinar cuál <div> es el contenedor "real"
+ * con scroll nativo, se navega con flecha abajo — igual que haría una
+ * persona —, siguiendo en cada paso el foco real que SAP mueve
+ * (document.activeElement), no una referencia vieja al elemento inicial.
  */
-async function scrollFindLabelElement(labelText, maxSteps = 40, stepDelay = 150) {
-  let el = findLabelElement(labelText);
-  if (el) return el;
+async function findClassificationValueInputAsync(labelText, maxSteps = 45, stepDelay = 150) {
+  let found = findRowInputFor(labelText);
+  if (found) return found;
 
   // Ancla: cualquier fila de la tabla de características ya renderizada
   // (confirmado por inspección real: estas filas llevan el atributo iidx).
@@ -183,38 +194,27 @@ async function scrollFindLabelElement(labelText, maxSteps = 40, stepDelay = 150)
   }
   if (!anchorRow) return null;
 
-  const focusable = anchorRow.querySelector("input, [tabindex]") || anchorRow;
+  let focusTarget = anchorRow.querySelector("input, [tabindex]") || anchorRow;
   try {
-    focusable.focus();
+    focusTarget.focus();
   } catch {
     // Si no se puede enfocar, se sigue igual: dispatchKey despacha el
     // evento sobre el elemento de todas formas.
   }
+  await delay(stepDelay);
 
   for (let i = 0; i < maxSteps; i++) {
-    el = findLabelElement(labelText);
-    if (el) return el;
-    dispatchKey(focusable, "ArrowDown", 40);
+    found = findRowInputFor(labelText);
+    if (found) return found;
+    dispatchKey(focusTarget, "ArrowDown", 40);
     await delay(stepDelay);
-  }
-  return findLabelElement(labelText);
-}
-
-async function findClassificationValueInputAsync(labelText) {
-  const labelEl = await scrollFindLabelElement(labelText);
-  if (!labelEl) return null;
-  // El <input> de la fila puede tardar un instante más que la etiqueta.
-  for (let i = 0; i < 6; i++) {
-    const row = findRowContainer(labelEl);
-    if (row) {
-      const inputs = Array.from(row.querySelectorAll("input")).filter(
-        (n) => isVisible(n) && !n.disabled && n.type !== "checkbox"
-      );
-      if (inputs[0]) return inputs[0];
+    // Seguir el foco real que SAP haya movido, no quedarse en la
+    // referencia del primer elemento (si no, el "cursor" nunca avanza).
+    if (document.activeElement && document.activeElement !== document.body) {
+      focusTarget = document.activeElement;
     }
-    await delay(150);
   }
-  return null;
+  return findRowInputFor(labelText);
 }
 
 // ---------------------------------------------------------------
