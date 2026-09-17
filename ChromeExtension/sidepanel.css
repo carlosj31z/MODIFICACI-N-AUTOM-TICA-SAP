@@ -39,19 +39,27 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
   font-family: inherit;
 }
 
+.hint-text {
+  font-size: 11px;
+  color: #555;
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
 .checkbox { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 
-.buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 
-button {
+button, .file-label {
   cursor: pointer;
   border: 1px solid #999;
   background: #fff;
   border-radius: 4px;
   padding: 6px 10px;
   font-size: 12px;
+  display: inline-block;
 }
-button:hover { background: #eee; }
+button:hover, .file-label:hover { background: #eee; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .table-wrap {
@@ -70,12 +78,53 @@ th, td {
   text-overflow: ellipsis;
   max-width: 160px;
 }
-th { position: sticky; top: 0; background: #f0f0f0; }
+th { position: sticky; top: 0; background: #f0f0f0; z-index: 1; }
 
-tr.estado-pendiente td:nth-child(6) { color: #888; }
-tr.estado-procesado td:nth-child(6) { color: #157a15; font-weight: 600; }
+/* --- Grilla editable de carga --- */
+.grid-wrap { max-height: 320px; }
+
+#grid td { max-width: none; overflow: visible; }
+
+#grid input[type="text"],
+#grid select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 3px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 3px;
+}
+#grid input[type="text"]:hover,
+#grid select:hover { border-color: #ccc; }
+#grid input[type="text"]:focus,
+#grid select:focus {
+  border-color: #0b62d6;
+  background: #fff;
+  outline: none;
+}
+#grid input[type="text"]::placeholder { color: #b56a6a; font-style: italic; }
+
+.transaccion-cell { color: #888; font-size: 11px; padding-left: 4px; }
+
+.row-del-btn {
+  border: none;
+  background: transparent;
+  color: #b00;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.row-del-btn:hover { background: #fee; border-radius: 3px; }
+
+.estado-cell { font-weight: 600; }
+.mensaje-cell { color: #555; white-space: normal; }
+
+tr.estado-pendiente .estado-cell { color: #888; }
+tr.estado-procesado .estado-cell { color: #157a15; }
 tr.estado-error { background: #fff2f2; }
-tr.estado-error td:nth-child(6) { color: #c0392b; font-weight: 600; }
+tr.estado-error .estado-cell { color: #c0392b; }
 
 #log {
   max-height: 200px;

@@ -11,6 +11,44 @@ const OPTIONAL_DIALOG_TIMEOUT = 1500;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Vistas válidas de MM02 (lista confirmada, ver comentario original en
+// ExcelService.cs). Se usan como opciones del desplegable "Vista" de la
+// grilla; si se pega/carga un texto que no calza exactamente, se agrega
+// como opción "personalizada" para no perder el dato.
+const SAP_VIEWS = [
+  "Datos básicos 1",
+  "Datos básicos 2",
+  "Clasificación",
+  "Ventas: Datos org.ventas 1",
+  "Ventas: Datos org.ventas 2",
+  "Ventas: Datos centro/gral.",
+  "Datos básicos SPP ampliados",
+  "Comercio exterior: Exportación",
+  "Texto comercial",
+  "Compras",
+  "Comercio exterior: Importación",
+  "Texto de pedido de compras",
+  "Planif.necesidades 1",
+  "Planif.necesidades 2",
+  "Planif.necesidades 3",
+  "Planif.necesidades 4",
+  "Planificación avanzada",
+  "SPP ampliado",
+  "Preparación de trabajo",
+  "Dat.gral.ce./Almacenamiento 1",
+  "Dat.gral.ce./Almacenamiento 2",
+  "Gestión de calidad",
+  "Contabilidad 1",
+  "Contabilidad 2",
+  "Cálculo coste 1",
+  "Cálculo del coste 2",
+  "Stock de centro",
+  "Stock almacén",
+  "Ejecución WM",
+  "WM Packaging",
+  "Datos de valoración segmento",
+];
+
 // ---------------------------------------------------------------
 // Comunicación con los content scripts (broadcast a todos los frames de la
 // pestaña, en vez del recorrido recursivo de iframes que hacía Selenium).
@@ -197,7 +235,8 @@ async function runAutomation(tasks, tabId, detenerEnPrimerError, ui) {
 
       for (const task of group) {
         await switchToViewTab(tabId, task.vista);
-        ui.log(`Buscando campo ${task.campoTecnico} en '${task.vista}'...`);
+        const accion = task.valor ? `Buscando campo ${task.campoTecnico} en '${task.vista}'...` : `Borrando campo ${task.campoTecnico} en '${task.vista}'...`;
+        ui.log(accion);
         const found = await fillSapField(tabId, task.campoTecnico, task.valor, ui.log);
         if (found) {
           camposLlenados.push(task);
@@ -247,8 +286,12 @@ async function runAutomation(tasks, tabId, detenerEnPrimerError, ui) {
 }
 
 // ---------------------------------------------------------------
-// UI: carga de Excel/CSV, tabla de tareas, log, botones
+// Grilla editable: filas con celdas (Material, Centro, Transacción fija,
+// Vista desplegable, Campo técnico, Valor) + columnas de solo lectura
+// (Estado, Mensaje) que se actualizan en vivo durante la ejecución.
 // ---------------------------------------------------------------
+
+const COLUMN_KEYS = ["material", "centro", "transaccion", "vista", "campoTecnico", "valor"];
 
 const HEADER_ALIASES = {
   material: "material",
@@ -269,58 +312,29 @@ function normalizeHeader(h) {
     .replace(/[^a-z0-9]/g, "");
 }
 
-function matrixToTasks(matrix) {
-  if (!matrix || matrix.length === 0) return [];
-  const header = matrix[0].map(normalizeHeader);
-  const colIndex = {};
-  header.forEach((h, i) => {
-    const key = HEADER_ALIASES[h];
-    if (key) colIndex[key] = i;
-  });
-
-  const tasks = [];
-  for (const row of matrix.slice(1)) {
-    if (!row || row.every((c) => c === undefined || c === null || String(c).trim() === "")) continue;
-    const get = (key) => {
-      const idx = colIndex[key];
-      return idx === undefined ? "" : String(row[idx] ?? "").trim();
-    };
-    const material = get("material");
-    if (!material) continue;
-    tasks.push({
-      material,
-      centro: get("centro"),
-      transaccion: get("transaccion") || "MM02",
-      vista: get("vista"),
-      campoTecnico: get("campoTecnico"),
-      valor: get("valor"),
-      estado: "Pendiente",
-      mensaje: "",
-    });
-  }
-  return tasks;
+function isHeaderRow(cells) {
+  const nonEmpty = cells.map((c) => String(c || "").trim()).filter(Boolean);
+  if (nonEmpty.length === 0) return false;
+  return nonEmpty.every((c) => Object.prototype.hasOwnProperty.call(HEADER_ALIASES, normalizeHeader(c)));
 }
-
-const state = {
-  tasks: [],
-  tabId: null,
-  rows: [],
-  stopFlag: false,
-};
 
 const els = {
   useActiveTabBtn: document.getElementById("useActiveTabBtn"),
   tabInfo: document.getElementById("tabInfo"),
   fileInput: document.getElementById("fileInput"),
-  pasteArea: document.getElementById("pasteArea"),
-  pasteBtn: document.getElementById("pasteBtn"),
+  addRowBtn: document.getElementById("addRowBtn"),
+  clearGridBtn: document.getElementById("clearGridBtn"),
+  gridBody: document.getElementById("gridBody"),
   detenerCheckbox: document.getElementById("detenerCheckbox"),
   startBtn: document.getElementById("startBtn"),
   stopBtn: document.getElementById("stopBtn"),
   retryBtn: document.getElementById("retryBtn"),
-  taskCount: document.getElementById("taskCount"),
-  taskBody: document.getElementById("taskBody"),
   log: document.getElementById("log"),
+};
+
+const state = {
+  tabId: null,
+  stopFlag: false,
 };
 
 function log(text) {
@@ -329,60 +343,203 @@ function log(text) {
   els.log.scrollTop = els.log.scrollHeight;
 }
 
-function renderTable() {
-  els.taskBody.innerHTML = "";
-  state.rows = [];
-  for (const task of state.tasks) {
-    const tr = document.createElement("tr");
-    tr.className = "estado-" + task.estado.toLowerCase();
-    tr.innerHTML = `
-      <td>${escapeHtml(task.material)}</td>
-      <td>${escapeHtml(task.centro)}</td>
-      <td>${escapeHtml(task.vista)}</td>
-      <td>${escapeHtml(task.campoTecnico)}</td>
-      <td>${escapeHtml(task.valor)}</td>
-      <td>${escapeHtml(task.estado)}</td>
-      <td>${escapeHtml(task.mensaje)}</td>
-    `;
-    els.taskBody.appendChild(tr);
-    state.rows.push(tr);
+function buildVistaSelect() {
+  const select = document.createElement("select");
+  select.dataset.col = "vista";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "-- Selecciona vista --";
+  select.appendChild(blank);
+  for (const v of SAP_VIEWS) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    select.appendChild(opt);
   }
-  els.taskCount.textContent = String(state.tasks.length);
+  return select;
 }
 
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function setVistaValue(select, rawValue) {
+  const val = String(rawValue || "").trim();
+  if (!val) {
+    select.value = "";
+    return;
+  }
+  const norm = normalizeHeader(val);
+  let match = Array.from(select.options).find((o) => normalizeHeader(o.value) === norm);
+  if (!match) {
+    match = document.createElement("option");
+    match.value = val;
+    match.textContent = `${val} (personalizada)`;
+    select.appendChild(match);
+  }
+  select.value = match.value;
+}
+
+function makeTextInput(colKey) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.dataset.col = colKey;
+  if (colKey === "valor") input.placeholder = "(vacío → se borrará en SAP)";
+  input.addEventListener("paste", onCellPaste);
+  return input;
+}
+
+function addRow(initial = {}) {
+  const tr = document.createElement("tr");
+  tr.dataset.estado = "Pendiente";
+  tr.className = "estado-pendiente";
+
+  const tdDel = document.createElement("td");
+  const delBtn = document.createElement("button");
+  delBtn.className = "row-del-btn";
+  delBtn.textContent = "✕";
+  delBtn.title = "Eliminar fila";
+  delBtn.addEventListener("click", () => tr.remove());
+  tdDel.appendChild(delBtn);
+  tr.appendChild(tdDel);
+
+  const tdMaterial = document.createElement("td");
+  const inputMaterial = makeTextInput("material");
+  inputMaterial.value = initial.material || "";
+  tdMaterial.appendChild(inputMaterial);
+  tr.appendChild(tdMaterial);
+
+  const tdCentro = document.createElement("td");
+  const inputCentro = makeTextInput("centro");
+  inputCentro.value = initial.centro || "";
+  tdCentro.appendChild(inputCentro);
+  tr.appendChild(tdCentro);
+
+  const tdTransaccion = document.createElement("td");
+  tdTransaccion.className = "transaccion-cell";
+  tdTransaccion.textContent = "MM02";
+  tr.appendChild(tdTransaccion);
+
+  const tdVista = document.createElement("td");
+  const selectVista = buildVistaSelect();
+  selectVista.addEventListener("paste", onCellPaste);
+  setVistaValue(selectVista, initial.vista || "");
+  tdVista.appendChild(selectVista);
+  tr.appendChild(tdVista);
+
+  const tdCampo = document.createElement("td");
+  const inputCampo = makeTextInput("campoTecnico");
+  inputCampo.value = initial.campoTecnico || "";
+  tdCampo.appendChild(inputCampo);
+  tr.appendChild(tdCampo);
+
+  const tdValor = document.createElement("td");
+  const inputValor = makeTextInput("valor");
+  inputValor.value = initial.valor || "";
+  tdValor.appendChild(inputValor);
+  tr.appendChild(tdValor);
+
+  const tdEstado = document.createElement("td");
+  tdEstado.className = "estado-cell";
+  tdEstado.textContent = "Pendiente";
+  tr.appendChild(tdEstado);
+
+  const tdMensaje = document.createElement("td");
+  tdMensaje.className = "mensaje-cell";
+  tdMensaje.textContent = "";
+  tr.appendChild(tdMensaje);
+
+  els.gridBody.appendChild(tr);
+  return tr;
+}
+
+function ensureRowExists(index) {
+  while (els.gridBody.children.length <= index) addRow();
+  return els.gridBody.children[index];
+}
+
+function setCellValue(rowIndex, key, value) {
+  const tr = ensureRowExists(rowIndex);
+  if (key === "transaccion") return; // siempre MM02, se ignora lo pegado
+  if (key === "vista") {
+    setVistaValue(tr.querySelector('[data-col="vista"]'), value);
+    return;
+  }
+  const input = tr.querySelector(`[data-col="${key}"]`);
+  if (input) input.value = String(value ?? "").trim();
+}
+
+/** Pegado tipo hoja de cálculo: distribuye filas/columnas desde la celda con foco. */
+function onCellPaste(e) {
+  const text = (e.clipboardData || window.clipboardData).getData("text");
+  if (!text || !/[\t\r\n]/.test(text)) return; // valor simple: dejar que el navegador pegue normal
+
+  e.preventDefault();
+  const tr = e.target.closest("tr");
+  const startRowIndex = Array.from(els.gridBody.children).indexOf(tr);
+  const startColKey = e.target.dataset.col;
+  const startColIdx = COLUMN_KEYS.indexOf(startColKey);
+
+  let lines = text.split(/\r?\n/);
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length === 0) return;
+
+  const firstCells = lines[0].split("\t");
+  if (isHeaderRow(firstCells)) lines = lines.slice(1);
+
+  lines.forEach((line, rOffset) => {
+    const cells = line.split("\t");
+    const targetRow = startRowIndex + rOffset;
+    cells.forEach((val, cOffset) => {
+      const colIdx = startColIdx + cOffset;
+      if (colIdx < 0 || colIdx >= COLUMN_KEYS.length) return;
+      setCellValue(targetRow, COLUMN_KEYS[colIdx], val);
+    });
+  });
+
+  log(`Pegado(s) ${lines.length} fila(s) en la tabla.`);
+}
+
+function collectTasksFromGrid() {
+  const tasks = [];
+  for (const tr of Array.from(els.gridBody.children)) {
+    const material = tr.querySelector('[data-col="material"]').value.trim();
+    if (!material) continue;
+    if (!tr.dataset.estado) tr.dataset.estado = "Pendiente";
+    tasks.push({
+      material,
+      centro: tr.querySelector('[data-col="centro"]').value.trim(),
+      transaccion: "MM02",
+      vista: tr.querySelector('[data-col="vista"]').value.trim(),
+      campoTecnico: tr.querySelector('[data-col="campoTecnico"]').value.trim(),
+      valor: tr.querySelector('[data-col="valor"]').value.trim(),
+      estado: tr.dataset.estado,
+      mensaje: tr.dataset.mensaje || "",
+      _tr: tr,
+    });
+  }
+  return tasks;
 }
 
 function setEstado(task, estado, mensaje) {
   task.estado = estado;
   task.mensaje = mensaje || "";
-  const idx = state.tasks.indexOf(task);
-  if (idx === -1) return;
-  const tr = state.rows[idx];
+  const tr = task._tr;
   if (!tr) return;
+  tr.dataset.estado = estado;
+  tr.dataset.mensaje = task.mensaje;
   tr.className = "estado-" + estado.toLowerCase();
-  tr.children[5].textContent = estado;
-  tr.children[6].textContent = task.mensaje;
+  tr.querySelector(".estado-cell").textContent = estado;
+  tr.querySelector(".mensaje-cell").textContent = task.mensaje;
 }
 
 function setControlsEnabled(enabled) {
   els.startBtn.disabled = !enabled;
   els.retryBtn.disabled = !enabled;
+  els.addRowBtn.disabled = !enabled;
+  els.clearGridBtn.disabled = !enabled;
   els.fileInput.disabled = !enabled;
-  els.pasteBtn.disabled = !enabled;
 }
 
-function loadTasks(matrix, source) {
-  const tasks = matrixToTasks(matrix);
-  if (tasks.length === 0) {
-    log(`No se encontraron filas válidas en ${source}. Verifica que la primera fila tenga los encabezados Material, Centro, Transaccion, Vista, CampoTecnico, Valor.`);
-    return;
-  }
-  state.tasks = tasks;
-  renderTable();
-  log(`${tasks.length} tarea(s) cargada(s) desde ${source}.`);
-}
+// ---------------------------------------------------------------
+// Eventos de UI
+// ---------------------------------------------------------------
 
 els.useActiveTabBtn.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -399,6 +556,14 @@ els.useActiveTabBtn.addEventListener("click", async () => {
   }
 });
 
+els.addRowBtn.addEventListener("click", () => addRow());
+
+els.clearGridBtn.addEventListener("click", () => {
+  els.gridBody.innerHTML = "";
+  for (let i = 0; i < 6; i++) addRow();
+  log("Tabla vaciada.");
+});
+
 els.fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -407,37 +572,48 @@ els.fileInput.addEventListener("change", async (e) => {
     const wb = XLSX.read(buf, { type: "array" });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
-    loadTasks(matrix, `el archivo "${file.name}"`);
+    if (matrix.length === 0) {
+      log(`El archivo "${file.name}" no tiene filas.`);
+      return;
+    }
+    let rows = matrix;
+    if (isHeaderRow(matrix[0])) rows = matrix.slice(1);
+
+    els.gridBody.innerHTML = "";
+    let count = 0;
+    for (const row of rows) {
+      if (!row || row.every((c) => String(c ?? "").trim() === "")) continue;
+      addRow({
+        material: row[0],
+        centro: row[1],
+        vista: row[3],
+        campoTecnico: row[4],
+        valor: row[5],
+      });
+      count++;
+    }
+    if (count === 0) addRow();
+    log(`${count} fila(s) cargada(s) desde "${file.name}".`);
   } catch (err) {
     log(`ERROR al leer el Excel: ${err.message}`);
+  } finally {
+    e.target.value = "";
   }
 });
 
-els.pasteBtn.addEventListener("click", () => {
-  const text = els.pasteArea.value.trim();
-  if (!text) {
-    log("No hay texto pegado para cargar.");
-    return;
-  }
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const sep = lines[0].includes("\t") ? "\t" : ",";
-  const matrix = lines.map((l) => l.split(sep));
-  loadTasks(matrix, "el texto pegado");
-});
-
-els.startBtn.addEventListener("click", async () => {
+async function startRun(tasks) {
   if (!state.tabId) {
     log("Primero selecciona la pestaña activa de SAP (paso 1).");
     return;
   }
-  if (state.tasks.length === 0) {
-    log("No hay tareas cargadas (paso 2).");
+  if (tasks.length === 0) {
+    log("No hay materiales con la columna 'Material' completa en la tabla.");
     return;
   }
   state.stopFlag = false;
   setControlsEnabled(false);
   try {
-    await runAutomation(state.tasks, state.tabId, els.detenerCheckbox.checked, {
+    await runAutomation(tasks, state.tabId, els.detenerCheckbox.checked, {
       log,
       setEstado,
       stopRequested: () => state.stopFlag,
@@ -447,38 +623,33 @@ els.startBtn.addEventListener("click", async () => {
   } finally {
     setControlsEnabled(true);
   }
-});
+}
+
+els.startBtn.addEventListener("click", () => startRun(collectTasksFromGrid()));
 
 els.stopBtn.addEventListener("click", () => {
   state.stopFlag = true;
   log("Deteniendo tras el material en curso...");
 });
 
-els.retryBtn.addEventListener("click", async () => {
-  const errored = state.tasks.filter((t) => t.estado === "Error");
-  if (errored.length === 0) {
+els.retryBtn.addEventListener("click", () => {
+  for (const tr of Array.from(els.gridBody.children)) {
+    if (tr.dataset.estado === "Error") {
+      tr.dataset.estado = "Pendiente";
+      tr.dataset.mensaje = "";
+      tr.className = "estado-pendiente";
+      tr.querySelector(".estado-cell").textContent = "Pendiente";
+      tr.querySelector(".mensaje-cell").textContent = "";
+    }
+  }
+  const tasks = collectTasksFromGrid();
+  const pendientes = tasks.filter((t) => t.estado === "Pendiente").length;
+  if (pendientes === 0) {
     log("No hay tareas en estado Error para reintentar.");
     return;
   }
-  errored.forEach((t) => setEstado(t, "Pendiente", ""));
-  if (!state.tabId) {
-    log("Primero selecciona la pestaña activa de SAP (paso 1).");
-    return;
-  }
-  state.stopFlag = false;
-  setControlsEnabled(false);
-  try {
-    await runAutomation(state.tasks, state.tabId, els.detenerCheckbox.checked, {
-      log,
-      setEstado,
-      stopRequested: () => state.stopFlag,
-    });
-  } catch (e) {
-    log(`ERROR CRÍTICO: ${e.message}`);
-  } finally {
-    setControlsEnabled(true);
-  }
+  startRun(tasks);
 });
 
-renderTable();
-log("Panel listo. Selecciona la pestaña de SAP y carga los materiales a bloquear.");
+for (let i = 0; i < 6; i++) addRow();
+log("Panel listo. Selecciona la pestaña de SAP y completa la tabla de materiales.");

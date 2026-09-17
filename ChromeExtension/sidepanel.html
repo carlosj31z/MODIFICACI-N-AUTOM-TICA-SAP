@@ -14,17 +14,37 @@
   </section>
 
   <section class="panel">
-    <h2>2. Cargar materiales</h2>
-    <label class="field">
-      Subir Excel (.xlsx) con columnas: Material, Centro, Transaccion, Vista, CampoTecnico, Valor
-      <input type="file" id="fileInput" accept=".xlsx,.xls" />
-    </label>
-    <label class="field">
-      O pega filas copiadas de Excel (con encabezados en la primera línea):
-      <textarea id="pasteArea" rows="5" placeholder="Material	Centro	Transaccion	Vista	CampoTecnico	Valor
-123456	1000	MM02	Datos básicos 1	MSTAE	Z2"></textarea>
-    </label>
-    <button id="pasteBtn">Cargar desde texto pegado</button>
+    <h2>2. Materiales a procesar</h2>
+    <p class="hint-text">
+      Pega filas copiadas de Excel directo sobre la tabla (haz click en una celda "Material" y pega),
+      edítalas a mano, o carga un .xlsx. La <strong>Transacción</strong> siempre es MM02.
+      La <strong>Vista</strong> es una lista desplegable con las vistas válidas de MM02.
+      Si dejas <strong>Valor</strong> vacío, ese campo se borrará en SAP.
+    </p>
+    <div class="buttons">
+      <button id="addRowBtn">+ Agregar fila</button>
+      <button id="clearGridBtn">🗑 Vaciar tabla</button>
+      <label class="file-label" for="fileInput">📎 Cargar Excel (.xlsx)</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" hidden />
+    </div>
+    <div class="table-wrap grid-wrap">
+      <table id="grid">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Material</th>
+            <th>Centro</th>
+            <th>Transacción</th>
+            <th>Vista</th>
+            <th>Campo técnico</th>
+            <th>Valor</th>
+            <th>Estado</th>
+            <th>Mensaje</th>
+          </tr>
+        </thead>
+        <tbody id="gridBody"></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel">
@@ -37,20 +57,6 @@
       <button id="startBtn">▶ Iniciar</button>
       <button id="stopBtn">⏹ Detener</button>
       <button id="retryBtn">↻ Reintentar errores</button>
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2>Tareas (<span id="taskCount">0</span>)</h2>
-    <div class="table-wrap">
-      <table id="taskTable">
-        <thead>
-          <tr>
-            <th>Material</th><th>Centro</th><th>Vista</th><th>Campo</th><th>Valor</th><th>Estado</th><th>Mensaje</th>
-          </tr>
-        </thead>
-        <tbody id="taskBody"></tbody>
-      </table>
     </div>
   </section>
 

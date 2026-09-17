@@ -26,9 +26,15 @@ sin pasar por la Chrome Web Store pública.
 1. Abre en una pestaña `https://fiori.medifarma.com.pe/sap/bc/ui2/flp?sap-client=300&sap-language=ES` y entra normalmente (SSO/credenciales).
 2. Abre el side panel de la extensión.
 3. Paso 1: click "Usar pestaña activa de SAP" con esa pestaña como pestaña activa/enfocada.
-4. Paso 2: sube el mismo Excel que usas hoy (columnas: `Material, Centro, Transaccion, Vista, CampoTecnico, Valor`) o pega filas copiadas de Excel directamente en el textarea.
+4. Paso 2: llena la tabla de materiales — es una grilla editable, no un formulario a ciegas:
+   - **Material, Centro, Campo técnico, Valor**: celdas de texto libre.
+   - **Transacción**: fija en `MM02`, no se edita.
+   - **Vista**: lista desplegable con las vistas válidas de MM02 (si pegas/subes un texto que no calza exactamente con ninguna, se agrega como opción "(personalizada)" para no perder el dato).
+   - **Valor vacío**: dejar la celda vacía borra ese campo en SAP (el placeholder gris "(vacío → se borrará en SAP)" te lo recuerda mientras la celda esté vacía).
+   - Puedes: escribir directo en las celdas, pegar filas completas copiadas de Excel (haz click en la celda "Material" de la fila donde quieres pegar y usa Ctrl+V — reparte automáticamente columnas y filas, como en una hoja de cálculo; si la primera fila pegada son encabezados, se descarta sola), o cargar un `.xlsx` con el botón "📎 Cargar Excel" (mismas columnas que usabas: Material, Centro, Transaccion, Vista, CampoTecnico, Valor — la columna Transacción del archivo se ignora, siempre queda MM02).
+   - "+ Agregar fila" / "✕" por fila / "🗑 Vaciar tabla" para gestionar filas sueltas.
 5. Paso 3: click "Iniciar". El panel va llenando MM02 material por material, agrupando filas contiguas del mismo material (igual que la app de escritorio), y graba una vez por material.
-6. Si algo falla, el estado queda en "Error" con el mensaje de diagnóstico; corrige lo necesario y usa "Reintentar errores" para reprocesar solo esas filas.
+6. Si algo falla, la fila queda en rojo con "Error" y el mensaje de diagnóstico en la columna Mensaje; corrige lo necesario directo en la celda y usa "Reintentar errores" para reprocesar solo esas filas (respeta lo que hayas corregido en la tabla, no repite el valor viejo).
 
 ### Ejemplo de fila para bloqueo de material (MSTAE)
 
