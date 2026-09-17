@@ -136,16 +136,6 @@ const POSICIONAR_BUTTON_SELECTORS = [
   { type: "xpath", value: "//*[@role='button'][contains(@title, 'Posicionar')]" },
 ];
 
-// Confirmado por inspección real: el botón "Continuar (Entrada)" del
-// diálogo "Posicionar sobre caract." dispara su acción vía
-// lsevents.Press → "GuiOkCodeButton" (mecanismo genérico de SAP GUI para el
-// botón de confirmar/Entrada de un popup) — más específico y estable que
-// buscar solo por el texto del título.
-const CONTINUAR_BUTTON_SELECTORS = [
-  { type: "xpath", value: "//*[contains(@lsevents, 'GuiOkCodeButton')]" },
-  { type: "xpath", value: "//*[contains(@title, 'Continuar') or contains(@title, 'Enter')]" },
-];
-
 function fieldSelectors(campoTecnico) {
   const lit = xpathLiteral(campoTecnico);
   const cssPart = CSS.escape(campoTecnico);
@@ -193,32 +183,61 @@ function findRowInputFor(labelText) {
 }
 
 /**
+ * Sube desde el título del diálogo hasta encontrar el contenedor que
+ * envuelve tanto su campo de texto como su botón de confirmar — evita
+ * confiar en document.activeElement (que puede no apuntar realmente al
+ * diálogo) o en encontrar un input equivocado en otra parte de la página.
+ */
+function findDialogContainer(titleText, maxLevels = 12) {
+  const titleEl = findLabelElement(titleText);
+  if (!titleEl) return null;
+  let node = titleEl;
+  for (let i = 0; i < maxLevels && node; i++) {
+    const hasInput = node.querySelector && node.querySelector('input[type="text"]');
+    const hasContinuar =
+      node.querySelector &&
+      (node.querySelector("[lsevents*='GuiOkCodeButton']") ||
+        Array.from(node.querySelectorAll("[title]")).some((el) => /Continuar|Enter/i.test(el.title || "")));
+    if (hasInput && hasContinuar) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
  * Usa el botón nativo "Posicionar" (lupa) de la tabla de características
- * para saltar directo a la fila pedida, en vez de navegar a ciegas. El
- * diálogo "Posicionar sobre caract." suele enfocar y preseleccionar
- * automáticamente su campo de texto al abrirse (confirmado visualmente),
- * así que se escribe sobre document.activeElement; si por algún motivo no
- * quedó enfocado ahí, se busca cerca del texto "Característica" como
- * respaldo.
+ * para saltar directo a la fila pedida, en vez de navegar a ciegas.
  */
 async function tryPositionSearch(labelText) {
   const btn = findFirstVisible(POSICIONAR_BUTTON_SELECTORS);
   if (!btn) return { ok: false, trace: "Posicionar: botón (lupa) no encontrado." };
   btn.click();
-  await delay(500);
 
-  let input = document.activeElement && document.activeElement.tagName === "INPUT" ? document.activeElement : null;
-  if (!input) {
-    const labelEl = findLabelElement("Característica/Valor") || findLabelElement("Característica");
-    const container = labelEl && (labelEl.closest("div") || labelEl.parentElement);
-    input = container ? container.querySelector("input[type='text']") : null;
+  let dialog = null;
+  for (let i = 0; i < 8 && !dialog; i++) {
+    await delay(200);
+    dialog = findDialogContainer("Posicionar sobre caract.");
   }
-  if (!input) return { ok: false, trace: "Posicionar: se abrió el diálogo pero no se encontró su campo de texto." };
+  if (!dialog) {
+    return { ok: false, trace: "Posicionar: se hizo click en la lupa pero no apareció el diálogo 'Posicionar sobre caract.'." };
+  }
+
+  const input = Array.from(dialog.querySelectorAll('input[type="text"]')).find((n) => isVisible(n) && !n.disabled);
+  if (!input) return { ok: false, trace: "Posicionar: diálogo abierto pero sin campo de texto visible/habilitado." };
 
   fillAndCommit(input, labelText, null); // solo escribir, el commit lo hace "Continuar"
   await delay(200);
 
-  const continuar = findFirstVisible(CONTINUAR_BUTTON_SELECTORS);
+  // Verificar que de verdad quedó escrito antes de confirmar — si no, es
+  // mejor abortar (y usar el respaldo de flechas) que confirmar un
+  // diálogo vacío.
+  if (input.value !== labelText) {
+    return { ok: false, trace: `Posicionar: el campo de texto no aceptó el valor (quedó '${input.value}').` };
+  }
+
+  const continuar = Array.from(dialog.querySelectorAll("*")).find(
+    (n) => isVisible(n) && (n.matches?.("[lsevents*='GuiOkCodeButton']") || /Continuar|Enter/i.test(n.title || ""))
+  );
   if (continuar) continuar.click();
   else dispatchKey(input, "Enter", 13);
 
