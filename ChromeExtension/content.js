@@ -157,15 +157,75 @@ function findLabelElement(labelText) {
   return contains.find(isVisible) || null;
 }
 
-function findClassificationValueInput(labelText) {
-  const labelEl = findLabelElement(labelText);
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Encuentra el ancestro que realmente scrollea (no solo el que tiene
+ * overflow declarado, sino el que de verdad tiene más contenido que alto
+ * visible), subiendo desde una fila cualquiera ya renderizada.
+ */
+function findScrollableAncestor(el) {
+  let node = el ? el.parentElement : null;
+  while (node && node !== document.body) {
+    if (node.scrollHeight > node.clientHeight + 2) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * La tabla de características de "Clasificación" es virtualizada: SAP solo
+ * crea en el DOM las filas (etiqueta + input) que están dentro del área de
+ * scroll visible — ni siquiera la etiqueta existe hasta que se scrollea
+ * hasta ahí. Por eso no basta con buscar y luego hacer scroll: hay que
+ * scrollear "a ciegas" el contenedor real, paso a paso, revisando después
+ * de cada paso si la etiqueta ya apareció (igual que lo haría una persona
+ * bajando el scroll a mano).
+ */
+async function scrollFindLabelElement(labelText, maxSteps = 25, stepDelay = 150) {
+  let el = findLabelElement(labelText);
+  if (el) return el;
+
+  // Ancla: cualquier fila de la tabla de características ya renderizada
+  // (confirmado por inspección real: estas filas llevan el atributo iidx).
+  let anchorRow = document.querySelector("tr[iidx]");
+  for (let i = 0; i < 10 && !anchorRow; i++) {
+    await delay(200);
+    anchorRow = document.querySelector("tr[iidx]");
+  }
+  if (!anchorRow) return null;
+
+  const container = findScrollableAncestor(anchorRow);
+  if (!container) return null;
+
+  container.scrollTop = 0;
+  await delay(stepDelay);
+  for (let i = 0; i < maxSteps; i++) {
+    el = findLabelElement(labelText);
+    if (el) return el;
+    const before = container.scrollTop;
+    container.scrollTop += container.clientHeight || 200;
+    await delay(stepDelay);
+    if (container.scrollTop === before) break; // llegó al final, no hay más para scrollear
+  }
+  return findLabelElement(labelText);
+}
+
+async function findClassificationValueInputAsync(labelText) {
+  const labelEl = await scrollFindLabelElement(labelText);
   if (!labelEl) return null;
-  const row = findRowContainer(labelEl);
-  if (!row) return null;
-  const inputs = Array.from(row.querySelectorAll("input")).filter(
-    (i) => isVisible(i) && !i.disabled && i.type !== "checkbox"
-  );
-  return inputs[0] || null;
+  // El <input> de la fila puede tardar un instante más que la etiqueta.
+  for (let i = 0; i < 6; i++) {
+    const row = findRowContainer(labelEl);
+    if (row) {
+      const inputs = Array.from(row.querySelectorAll("input")).filter(
+        (n) => isVisible(n) && !n.disabled && n.type !== "checkbox"
+      );
+      if (inputs[0]) return inputs[0];
+    }
+    await delay(150);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------
@@ -173,7 +233,7 @@ function findClassificationValueInput(labelText) {
 // sidepanel.js) por comando.
 // ---------------------------------------------------------------
 
-function handleMessage(msg, sendResponse) {
+async function handleMessage(msg, sendResponse) {
   switch (msg.type) {
     case "PING": {
       sendResponse({ ok: true, url: location.href });
@@ -246,8 +306,9 @@ function handleMessage(msg, sendResponse) {
       }
       // No es un <input> con data-hint/lsdata/title/id reconocible (p.ej.
       // campos normales de MM02); probar como fila de tabla de
-      // características (vista "Clasificación").
-      const rowInput = findClassificationValueInput(msg.campoTecnico);
+      // características (vista "Clasificación"), incluyendo scroll a
+      // ciegas si la fila todavía no está renderizada.
+      const rowInput = await findClassificationValueInputAsync(msg.campoTecnico);
       if (rowInput) {
         fillAndCommit(rowInput, msg.valor, "Tab");
         sendResponse({ ok: true });
@@ -266,25 +327,6 @@ function handleMessage(msg, sendResponse) {
           : `Ninguna etiqueta de tabla coincide con '${msg.campoTecnico}'.`
       );
       sendResponse({ ok: false, diagnostics });
-      break;
-    }
-    case "SCROLL_TO_LABEL": {
-      // La tabla de Clasificación es virtualizada: SAP solo materializa el
-      // <input> real de las filas visibles en el scroll. Se usa como paso
-      // único (no en cada reintento) para no pelear con el propio render de
-      // SAP; sidepanel.js le da una pausa de asentamiento después.
-      const labelEl = findLabelElement(msg.campoTecnico);
-      if (!labelEl) {
-        sendResponse({ ok: false });
-        break;
-      }
-      const target = findRowContainer(labelEl) || labelEl;
-      try {
-        target.scrollIntoView({ block: "center", behavior: "instant" });
-        sendResponse({ ok: true });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e) });
-      }
       break;
     }
     case "SAVE": {
@@ -329,10 +371,12 @@ function handleMessage(msg, sendResponse) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  try {
-    handleMessage(msg, sendResponse);
-  } catch (e) {
-    sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
-  }
-  return true;
+  Promise.resolve(handleMessage(msg, sendResponse)).catch((e) => {
+    try {
+      sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+    } catch {
+      // El canal ya se cerró (por ejemplo, la pestaña navegó); no hay nada más que hacer.
+    }
+  });
+  return true; // mantiene el canal abierto para la respuesta asíncrona
 });
