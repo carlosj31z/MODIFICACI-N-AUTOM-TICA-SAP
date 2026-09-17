@@ -137,6 +137,38 @@ function fieldSelectors(campoTecnico) {
 }
 
 // ---------------------------------------------------------------
+// Respaldo para tablas de características (p.ej. vista "Clasificación"):
+// no son <input> sueltos con data-hint, sino filas de una grilla con una
+// celda de etiqueta ("Denom.característica", p.ej. "EVENTO") y una celda
+// "Valor" editable al lado. En vez de codificar cada característica, se
+// busca la fila cuyo texto de etiqueta coincide con el CampoTecnico y se
+// llena el primer <input> editable de esa fila.
+// ---------------------------------------------------------------
+
+function findRowContainer(el) {
+  return el.closest("tr") || el.closest("[role='row']") || null;
+}
+
+function findLabelElement(labelText) {
+  const exact = xpathAll(`//*[normalize-space(text())=${xpathLiteral(labelText)}]`);
+  const visibleExact = exact.find(isVisible);
+  if (visibleExact) return visibleExact;
+  const contains = xpathAll(`//*[contains(normalize-space(text()), ${xpathLiteral(labelText)})]`);
+  return contains.find(isVisible) || null;
+}
+
+function findClassificationValueInput(labelText) {
+  const labelEl = findLabelElement(labelText);
+  if (!labelEl) return null;
+  const row = findRowContainer(labelEl);
+  if (!row) return null;
+  const inputs = Array.from(row.querySelectorAll("input")).filter(
+    (i) => isVisible(i) && !i.disabled && i.type !== "checkbox"
+  );
+  return inputs[0] || null;
+}
+
+// ---------------------------------------------------------------
 // Manejo de mensajes: un intento (sin reintentos ni timeouts, eso vive en
 // sidepanel.js) por comando.
 // ---------------------------------------------------------------
@@ -212,11 +244,26 @@ function handleMessage(msg, sendResponse) {
         sendResponse({ ok: true });
         break;
       }
+      // No es un <input> con data-hint/lsdata/title/id reconocible (p.ej.
+      // campos normales de MM02); probar como fila de tabla de
+      // características (vista "Clasificación").
+      const rowInput = findClassificationValueInput(msg.campoTecnico);
+      if (rowInput) {
+        fillAndCommit(rowInput, msg.valor, "Tab");
+        sendResponse({ ok: true });
+        break;
+      }
       // Diagnóstico: cuántas coincidencias hay para el selector principal
       // (aunque no sean usables), para depurar sin abrir DevTools.
       const primary = selectors[0];
       const diagnostics = nodesFor(primary).map(
         (n) => `id='${n.id || ""}' Displayed=${isVisible(n)} Enabled=${!n.disabled}`
+      );
+      const labelEl = findLabelElement(msg.campoTecnico);
+      diagnostics.push(
+        labelEl
+          ? `Etiqueta '${msg.campoTecnico}' encontrada pero sin <input> editable en su fila.`
+          : `Ninguna etiqueta de tabla coincide con '${msg.campoTecnico}'.`
       );
       sendResponse({ ok: false, diagnostics });
       break;

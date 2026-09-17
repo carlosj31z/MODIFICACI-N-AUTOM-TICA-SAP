@@ -36,6 +36,19 @@ sin pasar por la Chrome Web Store pública.
 |---|---|---|---|---|---|
 | 123456 | 1000 | MM02 | Datos básicos 1 | MSTAE | Z2 |
 
+### Ejemplo de fila para una característica de Clasificación (p.ej. EVENTO)
+
+La vista "Clasificación" no tiene campos sueltos, sino una tabla de
+características (etiqueta + valor). El bot busca la fila cuya etiqueta
+coincide con `CampoTecnico` (tal como se ve en la columna "Denom.
+característica") y llena el `Valor` de esa fila:
+
+| Material | Centro | Transaccion | Vista | CampoTecnico | Valor |
+|---|---|---|---|---|---|
+| 6000003298 |  | MM02 | Clasificación | EVENTO | CAT3 |
+
+No necesita `Centro` porque Clasificación es una vista general del material.
+
 ## Arquitectura
 
 - `content.js`: se inyecta en **todos los frames** de `fiori.medifarma.com.pe`
