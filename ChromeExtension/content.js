@@ -160,29 +160,17 @@ function findLabelElement(labelText) {
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Encuentra el ancestro que realmente scrollea (no solo el que tiene
- * overflow declarado, sino el que de verdad tiene más contenido que alto
- * visible), subiendo desde una fila cualquiera ya renderizada.
- */
-function findScrollableAncestor(el) {
-  let node = el ? el.parentElement : null;
-  while (node && node !== document.body) {
-    if (node.scrollHeight > node.clientHeight + 2) return node;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-/**
  * La tabla de características de "Clasificación" es virtualizada: SAP solo
- * crea en el DOM las filas (etiqueta + input) que están dentro del área de
- * scroll visible — ni siquiera la etiqueta existe hasta que se scrollea
- * hasta ahí. Por eso no basta con buscar y luego hacer scroll: hay que
- * scrollear "a ciegas" el contenedor real, paso a paso, revisando después
- * de cada paso si la etiqueta ya apareció (igual que lo haría una persona
- * bajando el scroll a mano).
+ * crea en el DOM las filas (etiqueta + input) que están dentro del área
+ * visible — ni siquiera la etiqueta existe hasta que se llega ahí. Este
+ * control puede tener más de una barra de scroll en pantalla (la del panel
+ * general y la de la tabla), así que en vez de adivinar cuál <div> es el
+ * contenedor "real" con scroll nativo, se navega con teclado (flecha abajo)
+ * sobre la celda enfocada — igual que haría una persona —, dejando que SAP
+ * mismo decida cómo traer la fila a la vista, sin importar cómo esté
+ * implementado el scroll por dentro.
  */
-async function scrollFindLabelElement(labelText, maxSteps = 25, stepDelay = 150) {
+async function scrollFindLabelElement(labelText, maxSteps = 40, stepDelay = 150) {
   let el = findLabelElement(labelText);
   if (el) return el;
 
@@ -195,18 +183,19 @@ async function scrollFindLabelElement(labelText, maxSteps = 25, stepDelay = 150)
   }
   if (!anchorRow) return null;
 
-  const container = findScrollableAncestor(anchorRow);
-  if (!container) return null;
+  const focusable = anchorRow.querySelector("input, [tabindex]") || anchorRow;
+  try {
+    focusable.focus();
+  } catch {
+    // Si no se puede enfocar, se sigue igual: dispatchKey despacha el
+    // evento sobre el elemento de todas formas.
+  }
 
-  container.scrollTop = 0;
-  await delay(stepDelay);
   for (let i = 0; i < maxSteps; i++) {
     el = findLabelElement(labelText);
     if (el) return el;
-    const before = container.scrollTop;
-    container.scrollTop += container.clientHeight || 200;
+    dispatchKey(focusable, "ArrowDown", 40);
     await delay(stepDelay);
-    if (container.scrollTop === before) break; // llegó al final, no hay más para scrollear
   }
   return findLabelElement(labelText);
 }
