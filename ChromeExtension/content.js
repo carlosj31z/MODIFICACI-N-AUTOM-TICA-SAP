@@ -165,18 +165,7 @@ function findClassificationValueInput(labelText) {
   const inputs = Array.from(row.querySelectorAll("input")).filter(
     (i) => isVisible(i) && !i.disabled && i.type !== "checkbox"
   );
-  if (inputs[0]) return inputs[0];
-  // La tabla de Clasificación es virtualizada: SAP solo materializa el
-  // <input> real de las filas visibles en el scroll. Si la etiqueta ya
-  // apareció pero su fila todavía no tiene input, forzar el scroll para que
-  // SAP la renderice — el intento siguiente (sidepanel.js reintenta cada
-  // 300ms) debería encontrarla ya lista.
-  try {
-    row.scrollIntoView({ block: "center", behavior: "instant" });
-  } catch {
-    labelEl.scrollIntoView({ block: "center" });
-  }
-  return null;
+  return inputs[0] || null;
 }
 
 // ---------------------------------------------------------------
@@ -277,6 +266,25 @@ function handleMessage(msg, sendResponse) {
           : `Ninguna etiqueta de tabla coincide con '${msg.campoTecnico}'.`
       );
       sendResponse({ ok: false, diagnostics });
+      break;
+    }
+    case "SCROLL_TO_LABEL": {
+      // La tabla de Clasificación es virtualizada: SAP solo materializa el
+      // <input> real de las filas visibles en el scroll. Se usa como paso
+      // único (no en cada reintento) para no pelear con el propio render de
+      // SAP; sidepanel.js le da una pausa de asentamiento después.
+      const labelEl = findLabelElement(msg.campoTecnico);
+      if (!labelEl) {
+        sendResponse({ ok: false });
+        break;
+      }
+      const target = findRowContainer(labelEl) || labelEl;
+      try {
+        target.scrollIntoView({ block: "center", behavior: "instant" });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
       break;
     }
     case "SAVE": {

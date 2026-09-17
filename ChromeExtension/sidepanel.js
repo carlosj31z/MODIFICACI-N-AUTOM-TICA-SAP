@@ -143,10 +143,26 @@ async function switchToViewTab(tabId, vista) {
 }
 
 async function fillSapField(tabId, campoTecnico, valor, log) {
+  // Primer intento rápido, sin tocar el scroll (cubre el caso normal: campo
+  // ya visible, o vista "Clasificación" con la fila ya en pantalla).
+  let res = await broadcastOnce(tabId, { type: "FILL_FIELD", campoTecnico, valor });
+  if (res.ok) {
+    await sleep(400);
+    return true;
+  }
+
+  // No apareció a la primera: puede ser una fila de la tabla de
+  // "Clasificación" fuera del área visible (SAP la virtualiza y solo
+  // materializa el <input> de lo que está en pantalla). Se hace scroll UNA
+  // sola vez (no en cada reintento, para no pelear con el propio render de
+  // SAP) y se le da tiempo a asentarse antes de retomar los reintentos.
+  const scrolled = await broadcastOnce(tabId, { type: "SCROLL_TO_LABEL", campoTecnico });
+  if (scrolled.ok) await sleep(800);
+
   // Vistas como "Clasificación" hacen un viaje al servidor para cargar la
   // tabla de características (más lento que un campo normal), por eso se usa
   // el timeout largo (igual que localizar el campo Material).
-  const res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, DEFAULT_TIMEOUT);
+  res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, DEFAULT_TIMEOUT);
   if (res.ok) {
     await sleep(400);
     return true;
