@@ -357,6 +357,12 @@ function log(text) {
   const stamp = new Date().toLocaleTimeString();
   els.log.textContent += `[${stamp}] ${text}\n`;
   els.log.scrollTop = els.log.scrollHeight;
+  // Colapsado por defecto (una fila); se expande solo cuando de verdad hay
+  // un error que revisar, para no ocupar espacio mientras todo fluye bien.
+  if (/error/i.test(text)) {
+    els.log.classList.remove("log-collapsed");
+    els.log.classList.add("log-expanded");
+  }
 }
 
 // ---------------------------------------------------------------
@@ -373,16 +379,16 @@ async function getActiveSapTab() {
 
 function describeTab(tab) {
   if (!tab) {
-    els.tabInfo.textContent = "No se detecta ninguna pestaña activa.";
-    els.tabInfo.className = "tab-info tab-missing";
+    els.tabInfo.textContent = "Sin pestaña activa";
+    els.tabInfo.title = "No se detecta ninguna pestaña activa.";
+    els.tabInfo.className = "tab-status tab-missing";
     return;
   }
   const esSap = tab.url && tab.url.includes(SAP_HOST);
-  els.tabInfo.textContent = `Pestaña activa: ${tab.title || "(sin título)"} — ${tab.url || ""}`;
-  els.tabInfo.className = "tab-info" + (esSap ? "" : " tab-warning");
-  if (!esSap) {
-    els.tabInfo.textContent += " ⚠️ No parece ser Fiori/SAP.";
-  }
+  const full = `Pestaña activa: ${tab.title || "(sin título)"} — ${tab.url || ""}`;
+  els.tabInfo.title = full;
+  els.tabInfo.className = "tab-status" + (esSap ? "" : " tab-warning");
+  els.tabInfo.textContent = esSap ? `✓ SAP: ${tab.title || "(sin título)"}` : `⚠️ No es Fiori/SAP: ${tab.title || ""}`;
 }
 
 chrome.tabs.onActivated.addListener(async () => describeTab(await getActiveSapTab()));

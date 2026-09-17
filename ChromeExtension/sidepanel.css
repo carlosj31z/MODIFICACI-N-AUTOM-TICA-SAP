@@ -34,13 +34,17 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
   background: #fafafa;
 }
 
-.tab-info {
-  font-size: 12px;
-  color: #555;
-  word-break: break-all;
+.tab-status {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: -6px 0 8px;
+  cursor: default;
 }
-.tab-info.tab-warning { color: #b06a00; font-weight: 600; }
-.tab-info.tab-missing { color: #c0392b; font-weight: 600; }
+.tab-status.tab-warning { color: #b06a00; font-weight: 600; }
+.tab-status.tab-missing { color: #c0392b; font-weight: 600; }
 
 .config-grid {
   display: flex;
@@ -102,14 +106,13 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
 .buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 
 .execute-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
-  gap: 20px;
-  flex-wrap: wrap;
+  gap: 12px;
 }
-.execute-row .checkbox { margin-bottom: 0; }
-.execute-row .buttons-inline { margin-bottom: 0; justify-content: center; }
+.execute-row .checkbox { margin-bottom: 0; justify-self: start; }
+.execute-row .buttons-inline { margin-bottom: 0; justify-self: center; grid-column: 2; }
 
 button, .file-label {
   cursor: pointer;
@@ -142,7 +145,7 @@ th, td {
 th { position: sticky; top: 0; background: #f0f0f0; z-index: 1; }
 
 /* --- Grilla editable de carga --- */
-.grid-wrap { max-height: 320px; }
+.grid-wrap { max-height: 440px; }
 
 #grid td { max-width: none; overflow: visible; }
 
@@ -186,7 +189,6 @@ tr.estado-error { background: #fff2f2; }
 tr.estado-error .estado-cell { color: #c0392b; }
 
 #log {
-  max-height: 200px;
   overflow: auto;
   background: #111;
   color: #d8d8d8;
@@ -196,4 +198,9 @@ tr.estado-error .estado-cell { color: #c0392b; }
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+  transition: max-height 0.15s ease;
 }
+/* Colapsado por defecto: una sola fila visible (la última línea, gracias
+   al auto-scroll al fondo en cada log()); se expande solo ante un error. */
+#log.log-collapsed { max-height: 22px; }
+#log.log-expanded { max-height: 220px; }

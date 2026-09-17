@@ -11,10 +11,7 @@
     <h1>Modificar material</h1>
     <button id="reloadExtBtn" class="reload-btn" title="Recargar extensión (después de un git pull). Recuerda refrescar también la pestaña de SAP.">🔄</button>
   </div>
-
-  <section class="panel">
-    <div id="tabInfo" class="tab-info">Detectando pestaña activa de SAP…</div>
-  </section>
+  <div id="tabInfo" class="tab-status">Detectando pestaña activa de SAP…</div>
 
   <section class="panel">
     <h2>1. Configuración de esta carga (aplica a todas las filas)</h2>
@@ -80,7 +77,7 @@
 
   <section class="panel">
     <h2>Registro</h2>
-    <pre id="log"></pre>
+    <pre id="log" class="log-collapsed"></pre>
   </section>
 
   <script src="lib/xlsx.mini.min.js"></script>
