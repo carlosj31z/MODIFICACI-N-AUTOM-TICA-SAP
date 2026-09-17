@@ -136,6 +136,17 @@ const POSICIONAR_BUTTON_SELECTORS = [
   { type: "xpath", value: "//*[@role='button'][contains(@title, 'Posicionar')]" },
 ];
 
+// Confirmado por inspección real: el botón "Continuar (Entrada)" del
+// diálogo dispara su acción vía lsevents.Press → "GuiOkCodeButton"
+// (mecanismo genérico de SAP GUI para el botón de confirmar/Entrada de un
+// popup) — más específico y estable que buscar solo por el texto del
+// título. Búsqueda global (no acotada a un contenedor), confirmado en
+// pruebas reales que encuentra y clica el botón correcto.
+const CONTINUAR_BUTTON_SELECTORS = [
+  { type: "xpath", value: "//*[contains(@lsevents, 'GuiOkCodeButton')]" },
+  { type: "xpath", value: "//*[contains(@title, 'Continuar') or contains(@title, 'Enter')]" },
+];
+
 function fieldSelectors(campoTecnico) {
   const lit = xpathLiteral(campoTecnico);
   const cssPart = CSS.escape(campoTecnico);
@@ -184,21 +195,21 @@ function findRowInputFor(labelText) {
 
 /**
  * Sube desde el título del diálogo hasta encontrar el contenedor que
- * envuelve tanto su campo de texto como su botón de confirmar — evita
- * confiar en document.activeElement (que puede no apuntar realmente al
- * diálogo) o en encontrar un input equivocado en otra parte de la página.
+ * envuelve su campo de texto — evita confiar en document.activeElement
+ * (que puede no apuntar realmente al diálogo) o en encontrar un input
+ * equivocado en otra parte de la página. Solo exige el input (no también
+ * el botón Continuar en el mismo nodo: eso causaba falsos positivos que
+ * aceptaban un contenedor que en realidad no incluía el botón real).
  */
-function findDialogContainer(titleText, maxLevels = 12) {
+function findDialogInput(titleText, maxLevels = 12) {
   const titleEl = findLabelElement(titleText);
   if (!titleEl) return null;
   let node = titleEl;
   for (let i = 0; i < maxLevels && node; i++) {
-    const hasInput = node.querySelector && node.querySelector('input[type="text"]');
-    const hasContinuar =
-      node.querySelector &&
-      (node.querySelector("[lsevents*='GuiOkCodeButton']") ||
-        Array.from(node.querySelectorAll("[title]")).some((el) => /Continuar|Enter/i.test(el.title || "")));
-    if (hasInput && hasContinuar) return node;
+    if (node.querySelectorAll) {
+      const input = Array.from(node.querySelectorAll('input[type="text"]')).find((n) => isVisible(n) && !n.disabled);
+      if (input) return input;
+    }
     node = node.parentElement;
   }
   return null;
@@ -213,17 +224,14 @@ async function tryPositionSearch(labelText) {
   if (!btn) return { ok: false, trace: "Posicionar: botón (lupa) no encontrado." };
   btn.click();
 
-  let dialog = null;
-  for (let i = 0; i < 8 && !dialog; i++) {
+  let input = null;
+  for (let i = 0; i < 8 && !input; i++) {
     await delay(200);
-    dialog = findDialogContainer("Posicionar sobre caract.");
+    input = findDialogInput("Posicionar sobre caract.");
   }
-  if (!dialog) {
-    return { ok: false, trace: "Posicionar: se hizo click en la lupa pero no apareció el diálogo 'Posicionar sobre caract.'." };
+  if (!input) {
+    return { ok: false, trace: "Posicionar: se hizo click en la lupa pero no apareció el diálogo 'Posicionar sobre caract.' con un campo de texto." };
   }
-
-  const input = Array.from(dialog.querySelectorAll('input[type="text"]')).find((n) => isVisible(n) && !n.disabled);
-  if (!input) return { ok: false, trace: "Posicionar: diálogo abierto pero sin campo de texto visible/habilitado." };
 
   fillAndCommit(input, labelText, null); // solo escribir, el commit lo hace "Continuar"
   await delay(200);
@@ -235,9 +243,9 @@ async function tryPositionSearch(labelText) {
     return { ok: false, trace: `Posicionar: el campo de texto no aceptó el valor (quedó '${input.value}').` };
   }
 
-  const continuar = Array.from(dialog.querySelectorAll("*")).find(
-    (n) => isVisible(n) && (n.matches?.("[lsevents*='GuiOkCodeButton']") || /Continuar|Enter/i.test(n.title || ""))
-  );
+  // Búsqueda global del botón (no acotada al mismo contenedor que el
+  // input): confirmado en pruebas reales que sí lo encuentra y lo clica.
+  const continuar = findFirstVisible(CONTINUAR_BUTTON_SELECTORS);
   if (continuar) continuar.click();
   else dispatchKey(input, "Enter", 13);
 
