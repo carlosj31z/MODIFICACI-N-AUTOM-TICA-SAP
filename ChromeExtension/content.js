@@ -233,8 +233,12 @@ async function tryPositionSearch(labelText) {
     return { ok: false, trace: "Posicionar: se hizo click en la lupa pero no apareció el diálogo 'Posicionar sobre caract.' con un campo de texto." };
   }
 
-  fillAndCommit(input, labelText, null); // solo escribir, el commit lo hace "Continuar"
-  await delay(200);
+  // Tab (no null): además de escribir, dispara blur/focusout — SAP parece
+  // necesitar que el campo pierda el foco para registrar internamente el
+  // valor antes de aceptar el click en Continuar (si no, el diálogo lo
+  // trata como vacío aunque el DOM ya muestre el texto escrito).
+  fillAndCommit(input, labelText, "Tab");
+  await delay(400);
 
   // Verificar que de verdad quedó escrito antes de confirmar — si no, es
   // mejor abortar (y usar el respaldo de flechas) que confirmar un
