@@ -83,7 +83,7 @@ async function broadcastOnce(tabId, message) {
   return { ok: false, diagnostics };
 }
 
-async function waitFor(tabId, message, timeoutMs, stepMs = 300) {
+async function waitFor(tabId, message, timeoutMs, stepMs = 200) {
   const deadline = Date.now() + timeoutMs;
   let last = { ok: false };
   do {
@@ -99,27 +99,34 @@ async function waitFor(tabId, message, timeoutMs, stepMs = 300) {
 // SapAutomationService.cs)
 // ---------------------------------------------------------------
 
+// Pausas de "asentamiento" tras una acción exitosa, antes del siguiente
+// intento de búsqueda. Se mantienen cortas a propósito: si SAP tarda más de
+// lo esperado, el siguiente paso ya reintenta solo (waitFor sondea cada
+// 300ms), así que alargar estas pausas fijas solo suma tiempo muerto sin
+// aportar fiabilidad real.
+const SETTLE = 350;
+
 async function navigateToMM02(tabId, log) {
   let res = await waitFor(tabId, { type: "CLICK_TILE" }, 5000);
   if (res.ok) {
     log("Tile 'Modificar material' (MM02) localizado. Abriendo...");
-    await sleep(700);
+    await sleep(SETTLE);
     return;
   }
   await broadcastOnce(tabId, { type: "CLICK_HOME" });
-  await sleep(700);
+  await sleep(SETTLE);
   res = await waitFor(tabId, { type: "CLICK_TILE" }, DEFAULT_TIMEOUT);
   if (!res.ok) {
     log("Nota: no se encontró el tile de MM02 explícitamente; se asume que ya está dentro de la transacción.");
     return;
   }
-  await sleep(700);
+  await sleep(SETTLE);
 }
 
 async function enterMaterial(tabId, material) {
   const res = await waitFor(tabId, { type: "ENTER_MATERIAL", material }, DEFAULT_TIMEOUT);
   if (!res.ok) throw new Error(`No se encontró el campo Material en ${DEFAULT_TIMEOUT / 1000}s.`);
-  await sleep(500);
+  await sleep(SETTLE);
 }
 
 async function selectView(tabId, vista, log) {
@@ -129,19 +136,19 @@ async function selectView(tabId, vista, log) {
     log("No apareció el diálogo de selección de vista; se asume que ya está en la vista correcta.");
     return;
   }
-  await sleep(500);
+  await sleep(SETTLE);
 }
 
 async function enterOrganizationalLevels(tabId, centro) {
   if (!centro) return;
   const res = await waitFor(tabId, { type: "ENTER_CENTRO", centro }, OPTIONAL_DIALOG_TIMEOUT);
-  if (res.ok) await sleep(500);
+  if (res.ok) await sleep(SETTLE);
 }
 
 async function switchToViewTab(tabId, vista) {
   if (!vista) return;
   const res = await waitFor(tabId, { type: "SWITCH_TAB", vista }, OPTIONAL_DIALOG_TIMEOUT);
-  if (res.ok) await sleep(500);
+  if (res.ok) await sleep(SETTLE);
 }
 
 async function fillSapField(tabId, campoTecnico, valor, log) {
@@ -152,7 +159,7 @@ async function fillSapField(tabId, campoTecnico, valor, log) {
   // (igual que localizar el campo Material).
   const res = await waitFor(tabId, { type: "FILL_FIELD", campoTecnico, valor }, DEFAULT_TIMEOUT);
   if (res.ok) {
-    await sleep(400);
+    await sleep(200);
     return true;
   }
   if (res.diagnostics && res.diagnostics.length) {
@@ -168,7 +175,7 @@ async function waitForStatusMessage(tabId, timeoutMs) {
   do {
     const res = await broadcastOnce(tabId, { type: "READ_STATUS" });
     if (res.ok && res.text) return { ok: !res.isError, message: res.text };
-    await sleep(400);
+    await sleep(250);
   } while (Date.now() < deadline);
   return { ok: true, message: "Exitoso" };
 }
@@ -192,7 +199,7 @@ async function saveTransaction(tabId, log) {
 async function safeAbortAndReturnHome(tabId, log) {
   try {
     await chrome.tabs.update(tabId, { url: DEFAULT_SAP_URL });
-    await sleep(1500);
+    await sleep(1200);
   } catch (e) {
     log(`Aviso: no se pudo regresar a la pantalla inicial (${e.message}). Verifique el estado de la pestaña.`);
   }
@@ -223,12 +230,18 @@ function groupByMaterial(tasks) {
 
 async function runAutomation(tasks, tabId, detenerEnPrimerError, ui) {
   const groups = groupByMaterial(tasks);
+  const total = groups.length;
+  const durations = [];
+  let done = 0;
+  ui.onProgress?.(0, total, null);
+
   for (const group of groups) {
     if (ui.stopRequested()) {
       ui.log("⏹ Proceso detenido por el usuario.");
       return;
     }
 
+    const groupStart = Date.now();
     const first = group[0];
     const pasos = group.map((t) => `${t.vista}/${t.campoTecnico}`).join(", ");
 
@@ -284,12 +297,18 @@ async function runAutomation(tasks, tabId, detenerEnPrimerError, ui) {
       await safeAbortAndReturnHome(tabId, ui.log);
     }
 
+    done++;
+    durations.push(Date.now() - groupStart);
+    const avgMs = durations.reduce((a, b) => a + b, 0) / durations.length;
+    const etaMs = Math.max(0, Math.round(avgMs * (total - done)));
+    ui.onProgress?.(done, total, etaMs);
+
     if (detenerEnPrimerError && group.some((t) => t.estado === "Error")) {
       ui.log(`⏹ Proceso detenido: hubo un error en [${first.material}]. Corrige lo necesario y usa 'Reintentar errores' para continuar solo con los pendientes/fallidos.`);
       return;
     }
 
-    await sleep(400);
+    await sleep(200);
   }
 
   ui.log("Proceso finalizado.");
@@ -347,11 +366,35 @@ const els = {
   stopBtn: document.getElementById("stopBtn"),
   retryBtn: document.getElementById("retryBtn"),
   log: document.getElementById("log"),
+  progressWrap: document.getElementById("progressWrap"),
+  progressFill: document.getElementById("progressFill"),
+  progressText: document.getElementById("progressText"),
 };
 
 const state = {
   stopFlag: false,
 };
+
+function formatEta(ms) {
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m} min ${s}s` : `${s}s`;
+}
+
+/** Barra de progreso + tiempo estimado, calculado con el promedio real de
+ * duración por material ya procesado en esta corrida (se afina solo). */
+function updateProgress(done, total, etaMs) {
+  if (total === 0) {
+    els.progressWrap.hidden = true;
+    return;
+  }
+  els.progressWrap.hidden = false;
+  const pct = Math.round((done / total) * 100);
+  els.progressFill.style.width = `${pct}%`;
+  const etaTxt = done >= total ? "" : etaMs == null ? " · calculando tiempo estimado…" : ` · ~${formatEta(etaMs)} restante`;
+  els.progressText.textContent = `${done}/${total} materiales (${pct}%)${etaTxt}`;
+}
 
 function log(text) {
   const stamp = new Date().toLocaleTimeString();
@@ -666,6 +709,7 @@ async function startRun(tasks) {
       log,
       setEstado,
       stopRequested: () => state.stopFlag,
+      onProgress: updateProgress,
     });
   } catch (e) {
     log(`ERROR CRÍTICO: ${e.message}`);

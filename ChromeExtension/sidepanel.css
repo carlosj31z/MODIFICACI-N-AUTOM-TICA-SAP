@@ -114,6 +114,27 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
 .execute-row .checkbox { margin-bottom: 0; justify-self: start; }
 .execute-row .buttons-inline { margin-bottom: 0; justify-self: center; grid-column: 2; }
 
+.progress-wrap { margin-top: 10px; }
+.progress-track {
+  height: 6px;
+  background: #e4e4e4;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #0b62d6, #2e9bff);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+.progress-text {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: #666;
+  text-align: center;
+}
+
 button, .file-label {
   cursor: pointer;
   border: 1px solid #999;
