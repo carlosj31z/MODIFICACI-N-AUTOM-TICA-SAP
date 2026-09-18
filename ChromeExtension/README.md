@@ -115,6 +115,16 @@ la reproduce después sobre una lista de materiales.
    de Centro (`WERKS`) se sustituyen automáticamente por lo que pongas en
    cada fila; el resto de valores se repite tal como se grabó.
 
+Mientras grabas, la tabla de pasos es editable: el botón ✕ borra un paso
+suelto (por si tocaste algo de más sin querer) y el campo "Valor" de cada
+paso de tipo llenar/marcar se puede corregir a mano antes de guardar la
+plantilla — no hace falta volver a grabar todo por un solo dato mal.
+
+Las plantillas también se pueden **exportar** (botón "⬇ Exportar", baja un
+`.json`) e **importar** (botón "⬆ Importar") — útil para compartirlas entre
+compañeros o entre distintos perfiles de Chrome, ya que `chrome.storage.local`
+es por perfil y no viaja solo.
+
 ### Cómo identifica un campo "cualquiera" sin que se le programe a mano
 
 - Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)

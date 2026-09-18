@@ -25,6 +25,8 @@ const macroEls = {
 
   templateSelect: document.getElementById("macroTemplateSelect"),
   deleteTemplateBtn: document.getElementById("macroDeleteTemplateBtn"),
+  exportBtn: document.getElementById("macroExportBtn"),
+  importInput: document.getElementById("macroImportInput"),
   previewBody: document.getElementById("macroPreviewBody"),
 
   addRowBtn: document.getElementById("macroAddRowBtn"),
@@ -72,10 +74,6 @@ function macroLog(text) {
   }
 }
 
-function escapeHtmlMacro(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
 /** Traduce un paso grabado (formato interno) a texto legible para las tablas. */
 function describeStep(step) {
   const accionMap = { click: "Click", fill: "Llenar", check: "Marcar" };
@@ -110,13 +108,82 @@ function describeStep(step) {
   return { accion, detalle, valor };
 }
 
-function renderStepsTable(tbody, steps) {
+/**
+ * Dibuja la tabla de pasos. En modo `editable` (la grabación en curso)
+ * agrega un botón para borrar el paso y, si el paso tiene un valor
+ * (fill/check), lo vuelve editable — así se puede corregir un dato o
+ * sacar un paso de más antes de guardar como plantilla. Las plantillas ya
+ * guardadas (vista previa) se muestran de solo lectura.
+ */
+function renderStepsTable(tbody, steps, options = {}) {
+  const { editable = false, onDelete, onValueChange } = options;
   tbody.innerHTML = "";
   steps.forEach((step, i) => {
     const { accion, detalle, valor } = describeStep(step);
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${i + 1}</td><td>${escapeHtmlMacro(accion)}</td><td>${escapeHtmlMacro(detalle)}</td><td>${escapeHtmlMacro(valor)}</td>`;
+
+    if (editable) {
+      const tdDel = document.createElement("td");
+      const delBtn = document.createElement("button");
+      delBtn.className = "row-del-btn";
+      delBtn.textContent = "✕";
+      delBtn.title = "Eliminar este paso";
+      delBtn.addEventListener("click", () => onDelete?.(i));
+      tdDel.appendChild(delBtn);
+      tr.appendChild(tdDel);
+    }
+
+    const tdNum = document.createElement("td");
+    tdNum.textContent = i + 1;
+    tr.appendChild(tdNum);
+
+    const tdAccion = document.createElement("td");
+    tdAccion.textContent = accion;
+    tr.appendChild(tdAccion);
+
+    const tdDetalle = document.createElement("td");
+    tdDetalle.textContent = detalle;
+    tr.appendChild(tdDetalle);
+
+    const tdValor = document.createElement("td");
+    if (editable && step.action === "fill") {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "step-value-input";
+      input.value = step.value ?? "";
+      input.addEventListener("change", () => onValueChange?.(i, input.value));
+      tdValor.appendChild(input);
+    } else if (editable && step.action === "check") {
+      const label = document.createElement("label");
+      label.className = "step-check-label";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = !!step.checked;
+      checkbox.addEventListener("change", () => onValueChange?.(i, checkbox.checked));
+      label.appendChild(checkbox);
+      label.append(" marcado");
+      tdValor.appendChild(label);
+    } else {
+      tdValor.textContent = valor;
+    }
+    tr.appendChild(tdValor);
+
     tbody.appendChild(tr);
+  });
+}
+
+function renderRecordedSteps() {
+  renderStepsTable(macroEls.stepsBody, macroState.steps, {
+    editable: true,
+    onDelete: (i) => {
+      macroState.steps.splice(i, 1);
+      renderRecordedSteps();
+    },
+    onValueChange: (i, value) => {
+      const step = macroState.steps[i];
+      if (step.action === "fill") step.value = value;
+      else if (step.action === "check") step.checked = value;
+    },
   });
 }
 
@@ -128,7 +195,7 @@ function renderStepsTable(tbody, steps) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "RECORDED_STEP" && macroState.recording) {
     macroState.steps.push(msg.step);
-    renderStepsTable(macroEls.stepsBody, macroState.steps);
+    renderRecordedSteps();
   }
 });
 
@@ -161,7 +228,7 @@ macroEls.stopBtn.addEventListener("click", async () => {
 
 macroEls.clearStepsBtn.addEventListener("click", () => {
   macroState.steps = [];
-  renderStepsTable(macroEls.stepsBody, macroState.steps);
+  renderRecordedSteps();
   macroLog("Pasos grabados vaciados.");
 });
 
@@ -233,6 +300,61 @@ macroEls.deleteTemplateBtn.addEventListener("click", async () => {
   await saveTemplatesToStorage(templates);
   macroLog(`Plantilla "${name}" eliminada.`);
   await refreshTemplateSelect();
+});
+
+// Exportar/importar como archivo .json, para compartir plantillas entre
+// compañeros o entre distintos perfiles de Chrome (chrome.storage.local es
+// por perfil, no viaja solo).
+
+macroEls.exportBtn.addEventListener("click", async () => {
+  const name = macroEls.templateSelect.value;
+  if (!name) {
+    macroLog("Selecciona una plantilla para exportar.");
+    return;
+  }
+  const templates = await loadTemplates();
+  const steps = templates[name];
+  if (!steps) {
+    macroLog("Plantilla no encontrada.");
+    return;
+  }
+  const blob = new Blob([JSON.stringify({ name, steps }, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name.replace(/[^a-z0-9_-]+/gi, "_")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  macroLog(`Plantilla "${name}" exportada.`);
+});
+
+macroEls.importInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.steps)) {
+      throw new Error("El archivo no tiene el formato esperado ({ name, steps }).");
+    }
+    let name = (data.name || file.name.replace(/\.json$/i, "")).trim() || "Importada";
+    const templates = await loadTemplates();
+    if (templates[name]) {
+      let n = 2;
+      while (templates[`${name} (${n})`]) n++;
+      name = `${name} (${n})`;
+    }
+    templates[name] = data.steps;
+    await saveTemplatesToStorage(templates);
+    macroLog(`Plantilla "${name}" importada (${data.steps.length} paso(s)).`);
+    await refreshTemplateSelect(name);
+  } catch (err) {
+    macroLog(`ERROR al importar: ${err.message}`);
+  } finally {
+    e.target.value = "";
+  }
 });
 
 // ---------------------------------------------------------------

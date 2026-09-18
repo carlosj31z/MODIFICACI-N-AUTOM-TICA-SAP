@@ -225,6 +225,18 @@ th { position: sticky; top: 0; background: #f0f0f0; z-index: 1; }
 }
 .row-del-btn:hover { background: #fee; border-radius: 3px; }
 
+.step-value-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.step-value-input:focus { border-color: #0b62d6; outline: none; }
+.step-check-label { display: flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; }
+
 .estado-cell { font-weight: 600; }
 .mensaje-cell { color: #555; white-space: normal; }
 

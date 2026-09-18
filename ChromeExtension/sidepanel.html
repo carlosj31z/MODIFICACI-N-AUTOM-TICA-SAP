@@ -104,9 +104,10 @@
         <button id="macroStopBtn" disabled>⏹ Detener grabación</button>
         <button id="macroClearStepsBtn">🗑 Vaciar pasos</button>
       </div>
+      <p class="hint-text hint-compact">Puedes editar el Valor de un paso o borrar pasos sueltos antes de guardar.</p>
       <div class="table-wrap" style="max-height: 200px;">
         <table id="macroStepsTable">
-          <thead><tr><th>#</th><th>Acción</th><th>Detalle</th><th>Valor</th></tr></thead>
+          <thead><tr><th></th><th>#</th><th>Acción</th><th>Detalle</th><th>Valor</th></tr></thead>
           <tbody id="macroStepsBody"></tbody>
         </table>
       </div>
@@ -124,6 +125,11 @@
           <select id="macroTemplateSelect"></select>
         </label>
         <button id="macroDeleteTemplateBtn">🗑 Eliminar plantilla</button>
+      </div>
+      <div class="buttons">
+        <button id="macroExportBtn">⬇ Exportar</button>
+        <label class="file-label" for="macroImportInput">⬆ Importar</label>
+        <input type="file" id="macroImportInput" accept=".json" hidden />
       </div>
       <div class="table-wrap" style="max-height: 150px;">
         <table id="macroPreviewTable">
