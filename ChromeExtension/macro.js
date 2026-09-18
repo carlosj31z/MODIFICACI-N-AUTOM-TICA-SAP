@@ -79,12 +79,15 @@ function macroLog(text) {
 
 /** Traduce un paso grabado (formato interno) a texto legible para las tablas. */
 function describeStep(step) {
-  const accionMap = { click: "Click", fill: "Llenar", check: "Marcar" };
-  const accion = accionMap[step.action] || step.action;
+  const accionMap = { click: "Click", fill: "Llenar", check: "Marcar", key: "Tecla" };
+  let accion = accionMap[step.action] || step.action;
+  if (step.action === "click" && step.clickType === "double") accion = "Doble click";
+
+  const tech = step.tech || (step.fp && step.fp.tech);
   let detalle;
   switch (step.kind) {
     case "field":
-      detalle = `Campo ${step.tech}`;
+      detalle = tech ? `Campo ${tech}` : `Campo "${step.label || ""}"`;
       break;
     case "tableField":
       detalle = `Fila "${step.label}"`;
@@ -104,10 +107,18 @@ function describeStep(step) {
     case "button":
       detalle = `Botón "${step.label}"`;
       break;
+    case "key":
+      detalle = step.label || step.key || "";
+      break;
+    case "check":
+      detalle = `Casilla "${step.label}"`;
+      break;
     default:
       detalle = step.label || "";
   }
-  const valor = step.action === "fill" ? step.value : step.action === "check" ? (step.checked ? "marcado" : "desmarcado") : "";
+
+  const valor =
+    step.action === "fill" ? step.value : step.action === "check" ? (step.checked ? "marcado" : "desmarcado") : "";
   return { accion, detalle, valor };
 }
 
@@ -417,7 +428,7 @@ macroEls.testBtn.addEventListener("click", async () => {
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     const overrideValue = macroOverrideFor(step, material, "");
-    const res = await macroRunStep(tab.id, step, overrideValue, 12000, true);
+    const res = await macroRunStepExact(tab.id, step, overrideValue, 12000, true);
     const { accion, detalle } = describeStep(step);
     if (res.ok) {
       ok++;
@@ -578,24 +589,76 @@ function macroUpdateProgress(done, total, etaMs) {
  * waitFor() en sidepanel.js, pero genérico sobre EXECUTE_STEP. Con
  * dryRun:true, content.js navega igual (tiles/pestañas/filas) pero no
  * escribe valores ni presiona Grabar — ver executeRecordedStep. */
-async function macroRunStep(tabId, step, overrideValue, timeoutMs = 12000, dryRun = false) {
+/**
+ * Ejecuta un paso de forma EXACTA, en dos fases:
+ *  1. Se le pide a TODOS los frames que busquen el elemento y devuelvan un
+ *     puntaje de qué tan bien calza con la huella grabada, sin tocar nada.
+ *  2. Solo el frame con mejor puntaje ejecuta la acción.
+ * Así se evita que actúe el frame equivocado (o dos a la vez), que era el
+ * riesgo de quedarse con "el primero que responda que sí".
+ */
+async function macroRunStepExact(tabId, step, overrideValue, timeoutMs = 12000, dryRun = false) {
   const deadline = Date.now() + timeoutMs;
-  let last = { ok: false };
+  let bestTrace = "";
   do {
-    last = await broadcastOnce(tabId, { type: "EXECUTE_STEP", step, overrideValue, dryRun });
-    if (last.ok) return last;
+    const frameIds = await macroGetFrameIds(tabId);
+    const matches = await Promise.all(
+      frameIds.map(async (frameId) => {
+        const res = await macroSendToFrame(tabId, frameId, { type: "MATCH_STEP", step });
+        return res && res.ok ? { frameId, ...res } : { frameId, ok: false, score: (res && res.score) || 0, trace: res && res.trace };
+      })
+    );
+
+    const viable = matches.filter((m) => m.ok);
+    if (viable.length) {
+      viable.sort((a, b) => b.score - a.score);
+      const winner = viable[0];
+      const ambiguo = viable.length > 1 && viable[1].score === winner.score ? " (⚠ empate entre frames)" : "";
+      const run = await macroSendToFrame(tabId, winner.frameId, {
+        type: "RUN_MATCHED",
+        token: winner.token,
+        step,
+        overrideValue,
+        dryRun,
+      });
+      if (run && run.ok) {
+        return { ok: true, trace: `${winner.trace || ""}${ambiguo}${run.trace ? " " + run.trace : ""}`.trim() };
+      }
+      bestTrace = (run && run.trace) || winner.trace || bestTrace;
+    } else {
+      const best = matches.sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+      if (best && best.trace) bestTrace = best.trace;
+    }
     await sleep(250);
   } while (Date.now() < deadline);
-  return last;
+  return { ok: false, trace: bestTrace || "no encontrado" };
+}
+
+async function macroGetFrameIds(tabId) {
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    return frames.map((f) => f.frameId);
+  } catch {
+    return [0];
+  }
+}
+
+async function macroSendToFrame(tabId, frameId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message, { frameId });
+  } catch {
+    return null; // frame sin content script (aún no cargó, otro origen, etc.)
+  }
 }
 
 /** El paso grabado del campo Material (y Centro, si se grabó) se sustituye
  * por el valor de la fila actual; todo lo demás se repite tal como se
  * grabó. Así una sola grabación sirve para cualquier lista de materiales. */
 function macroOverrideFor(step, material, centro) {
-  if (step.action !== "fill" || step.kind !== "field") return undefined;
-  if (step.tech === "RMMG1-MATNR") return material;
-  if (step.tech === "WERKS") return centro || undefined;
+  if (step.action !== "fill") return undefined;
+  const tech = step.tech || (step.fp && step.fp.tech);
+  if (tech === "RMMG1-MATNR") return material;
+  if (tech === "WERKS") return centro || undefined;
   return undefined;
 }
 
@@ -617,7 +680,7 @@ async function macroRunAutomation(templateSteps, tasks, tabId, detenerEnPrimerEr
     for (let i = 0; i < templateSteps.length; i++) {
       const step = templateSteps[i];
       const overrideValue = macroOverrideFor(step, task.material, task.centro);
-      const res = await macroRunStep(tabId, step, overrideValue);
+      const res = await macroRunStepExact(tabId, step, overrideValue);
       if (!res.ok) {
         const { accion, detalle } = describeStep(step);
         ui.setEstado(task, "Error", `Paso ${i + 1} (${accion} ${detalle}) falló: ${res.trace || "no encontrado"}`);

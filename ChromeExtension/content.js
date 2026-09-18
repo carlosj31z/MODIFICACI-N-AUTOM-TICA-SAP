@@ -474,8 +474,20 @@ async function handleMessage(msg, sendResponse) {
       sendResponse({ ok: true });
       break;
     }
-    case "EXECUTE_STEP": {
-      const result = await executeRecordedStep(msg.step, msg.overrideValue, msg.dryRun);
+    case "MATCH_STEP": {
+      // Fase 1 de la reproducción exacta: este frame busca el elemento del
+      // paso y devuelve QUÉ TAN BIEN calza (puntaje), sin tocar nada. El
+      // orquestador compara los puntajes de todos los frames y solo manda
+      // ejecutar al que mejor calzó — así no se ejecuta en el frame
+      // equivocado ni dos veces.
+      const result = await matchRecordedStep(msg.step);
+      sendResponse(result);
+      break;
+    }
+    case "RUN_MATCHED": {
+      // Fase 2: ejecuta sobre el elemento que este mismo frame ya localizó
+      // en la fase de match (referenciado por token), sin volver a buscar.
+      const result = await runMatchedStep(msg.token, msg.step, msg.overrideValue, msg.dryRun);
       sendResponse(result);
       break;
     }
@@ -485,14 +497,21 @@ async function handleMessage(msg, sendResponse) {
 }
 
 // =================================================================
-// GRABADORA (apartado nuevo, independiente de todo lo anterior): permite
-// grabar CUALQUIER click/cambio de campo que haga el usuario a mano, en
-// cualquier vista de MM01 o MM02, extrayendo un identificador reutilizable
-// (nombre técnico del campo, o etiqueta de fila para tablas tipo
-// Clasificación) para poder reproducir la misma secuencia luego sobre
-// otros materiales. No modifica ni reemplaza nada de lo de arriba: los
-// mensajes FILL_FIELD/CLICK_TILE/etc. de "Modificar material" siguen
-// intactos.
+// GRABADORA (apartado nuevo, independiente de todo lo anterior): graba
+// CUALQUIER click, doble click, tecla o cambio de campo que haga el
+// usuario a mano, en cualquier vista de MM01 o MM02, y lo reproduce
+// después sobre otros materiales. No modifica ni reemplaza nada de lo de
+// arriba: los mensajes FILL_FIELD/CLICK_TILE/etc. de "Modificar material"
+// siguen intactos.
+//
+// IDENTIFICACIÓN EXACTA: en vez de reducir cada elemento a una etiqueta
+// (ambiguo), se captura una HUELLA completa. La pieza clave es el SID —
+// la ruta canónica de SAP GUI que viene dentro de lsdata/data-hint, del
+// tipo "wnd[0]/usr/subSUBSCR_BEWERT:SAPLCTMS:5000/.../ctxtRCTMS-MWERT[1,8]".
+// Es el mismo identificador que usa SAP GUI Scripting, así que cuando
+// está disponible el match es exacto, no heurístico. Al reproducir, cada
+// frame puntúa sus candidatos contra la huella y solo actúa el que mejor
+// calza (ver MATCH_STEP / RUN_MATCHED).
 // =================================================================
 
 /** Busca en un string crudo (data-hint o lsdata) el patrón TABLA-CAMPO que
@@ -516,182 +535,335 @@ function extractTechnicalField(el) {
   return extractTechFieldFromAttr(dataHint) || extractTechFieldFromAttr(lsdata);
 }
 
+/** Extrae el SID: la ruta canónica de SAP GUI ("wnd[0]/usr/..."), que
+ * aparece tanto en lsdata (campos) como en data-hint (botones). Es el
+ * identificador más exacto disponible. */
+function extractSid(el) {
+  const blob = (el.getAttribute("lsdata") || "") + " " + (el.getAttribute("data-hint") || "");
+  const m = blob.match(/wnd\[\d+\][^"\\]*/);
+  return m ? m[0] : null;
+}
+
+/** El SID sin las coordenadas finales [fila,col]: identifica el control
+ * dentro de la pantalla sin atarse a la posición visible del scroll (las
+ * tablas virtualizadas cambian esas coordenadas según lo que esté a la
+ * vista). */
+function sidWithoutCoords(sid) {
+  return sid ? sid.replace(/\[\d+,\d+\]\s*$/, "") : null;
+}
+
+/** Programa:pantalla:transacción (ej. "SAPLCLFM:1101:MM02"), dentro de
+ * data-hint. Sirve para confirmar que estamos en la misma pantalla. */
+function extractDynp(el) {
+  const hint = el.getAttribute("data-hint") || "";
+  const m = hint.match(/"dynp"\s*:\s*"([^"]+)"/);
+  return m ? m[1] : null;
+}
+
 /** Para filas de tabla (Clasificación y similares): el texto de la celda
  * que NO es la celda del propio campo suele ser la etiqueta ("EVENTO",
- * "ORIGEN_MATERIAL", etc.) — igual lógica que ya usa findRowInputFor pero
- * a la inversa (dado el input, encontrar su etiqueta). */
+ * "ORIGEN_MATERIAL", etc.). */
 function getRowLabelText(row, valueEl) {
   const cells = Array.from(row.children).filter((c) => c.tagName === "TD");
-  const valueCell = valueEl.closest("td");
+  const valueCell = valueEl.closest ? valueEl.closest("td") : null;
   const labelCell = cells.find((td) => td !== valueCell && td.textContent.trim().length > 0);
   return labelCell ? labelCell.textContent.trim() : null;
 }
 
+/** ¿Está dentro de una tabla REALMENTE virtualizada? El discriminador
+ * confirmado por inspección es el atributo `iidx` en la fila: solo lo
+ * tienen los controles de tabla dinámicos de SAP. Muchas pantallas usan
+ * <table> nada más para alinear campos normales, y ahí el nombre técnico
+ * sí es único y confiable. */
+function virtualizedRowOf(el) {
+  const row = el.closest ? el.closest("tr") : null;
+  return row && row.hasAttribute("iidx") ? row : null;
+}
+
+const SEMANTIC_CLASS_RE = /^(ls|ur)[A-Za-z]/;
+
 /**
- * Identifica un <input>/<textarea> que el usuario acaba de editar. OJO:
- * muchas pantallas de SAP usan <table> solo para alinear campos normales
- * visualmente (no son tablas virtualizadas tipo Clasificación) — tratar
- * CUALQUIER campo dentro de un <tr> como "fila de característica" hacía
- * que el propio campo Material se registrara mal como fila "Número de
- * material" y fallara al reproducir. El discriminador real (confirmado
- * por inspección) es el atributo `iidx`: SOLO las filas de las tablas
- * virtualizadas de SAP lo tienen. Por eso el nombre técnico (más
- * específico y confiable) tiene prioridad siempre que se pueda extraer, y
- * la etiqueta de fila solo se usa cuando de verdad es una tabla
- * virtualizada, o como último recurso si no hay nombre técnico.
+ * Huella completa de un elemento: todas las señales disponibles, para
+ * poder comparar candidatos por puntaje al reproducir en vez de
+ * quedarnos con "el primero que calce más o menos".
  */
-function describeFieldElement(el) {
-  const row = el.closest("tr");
-  if (row && row.hasAttribute("iidx")) {
-    const label = getRowLabelText(row, el);
-    if (label) return { kind: "tableField", label };
-  }
-  const tech = extractTechnicalField(el);
-  if (tech) return { kind: "field", tech };
-  if (row) {
-    const label = getRowLabelText(row, el);
-    if (label) return { kind: "tableField", label };
-  }
-  return null;
+function fingerprintOf(el) {
+  if (!el || el.nodeType !== 1) return {};
+  const sid = extractSid(el);
+  const vRow = virtualizedRowOf(el);
+  const row = el.closest ? el.closest("tr") : null;
+  const classes = String(el.className || "")
+    .split(/\s+/)
+    .filter((c) => SEMANTIC_CLASS_RE.test(c))
+    .slice(0, 6);
+  return {
+    sid,
+    sidBase: sidWithoutCoords(sid),
+    dynp: extractDynp(el),
+    tech: extractTechnicalField(el),
+    elId: el.id || null,
+    tag: el.tagName,
+    type: el.getAttribute("type") || null,
+    name: el.getAttribute("name") || null,
+    role: el.getAttribute("role") || null,
+    title: (el.getAttribute("title") || "").trim() || null,
+    ariaLabel: (el.getAttribute("aria-label") || "").trim() || null,
+    text: (el.textContent || "").trim().slice(0, 80) || null,
+    href: el.getAttribute("href") || null,
+    inVirtualTable: !!vRow,
+    rowLabel: row ? getRowLabelText(row, el) : null,
+    classes,
+  };
 }
 
-/** Identifica qué clicó el usuario: tile del Launchpad, pestaña de vista,
- * botón Grabar, fila (selección de vistas, resultados de Posicionar), o
- * botón genérico — en ese orden de especificidad. */
-function describeClickTarget(el) {
-  const tile = el.closest("a[href*='#']");
-  if (tile) {
-    const href = tile.getAttribute("href") || "";
-    const hashMatch = href.match(/#([^?]+)/);
-    const label = (tile.getAttribute("aria-label") || tile.title || tile.textContent || "").trim();
-    if (label || hashMatch) return { kind: "tile", label: label.slice(0, 80), hash: hashMatch ? hashMatch[1] : href };
+/** Puntaje de qué tan bien un candidato calza con la huella grabada. */
+function scoreCandidate(el, fp) {
+  const c = fingerprintOf(el);
+  let s = 0;
+  if (fp.sid && c.sid && c.sid === fp.sid) s += 100;
+  else if (fp.sidBase && c.sidBase && c.sidBase === fp.sidBase) s += 55;
+  if (fp.tech && c.tech === fp.tech) s += 25;
+  if (fp.dynp && c.dynp === fp.dynp) s += 10;
+  if (fp.elId && c.elId === fp.elId) s += 15;
+  if (fp.rowLabel && c.rowLabel && c.rowLabel === fp.rowLabel) s += 40;
+  if (fp.href && c.href && c.href === fp.href) s += 35;
+  if (fp.title && c.title === fp.title) s += 20;
+  if (fp.ariaLabel && c.ariaLabel === fp.ariaLabel) s += 18;
+  if (fp.text && c.text === fp.text) s += 15;
+  if (fp.role && c.role === fp.role) s += 5;
+  if (fp.tag && c.tag === fp.tag) s += 5;
+  if (fp.type && c.type === fp.type) s += 4;
+  if (fp.name && c.name === fp.name) s += 3;
+  if (fp.classes && fp.classes.length && c.classes) {
+    const shared = fp.classes.filter((x) => c.classes.includes(x)).length;
+    s += Math.min(shared * 2, 8);
   }
-
-  const tab = el.closest("[class*='lsTabStrip']");
-  if (tab) {
-    const text = tab.textContent.trim();
-    if (text) return { kind: "tab", label: text.slice(0, 80) };
-  }
-
-  const hintBlob = (el.getAttribute("data-hint") || "") + (el.getAttribute("lsdata") || "");
-  const title = el.getAttribute("title") || el.getAttribute("aria-label") || "";
-  if (/tbar\[0\]\/btn\[11\]/.test(hintBlob) || /Grabar|Guardar|Save/i.test(title)) {
-    return { kind: "save", label: "Grabar" };
-  }
-
-  const row = el.closest("tr");
-  if (row) {
-    const text = row.textContent.trim();
-    if (text) return { kind: "row", label: text.slice(0, 80) };
-  }
-
-  const label = title || el.textContent.trim();
-  if (label) return { kind: "button", label: label.slice(0, 60) };
-  return null;
+  if (!isVisible(el)) s -= 60;
+  if (el.disabled) s -= 30;
+  return s;
 }
+
+const MATCH_MIN_SCORE = 35;
+
+/** Reúne candidatos plausibles por cada señal disponible de la huella. */
+function collectCandidates(fp) {
+  const set = new Set();
+  const add = (nodes) => {
+    for (const n of nodes) if (n && n.nodeType === 1) set.add(n);
+  };
+  if (fp.sid) add(xpathAll(`//*[contains(@lsdata, ${xpathLiteral(fp.sid)}) or contains(@data-hint, ${xpathLiteral(fp.sid)})]`));
+  if (fp.sidBase) add(xpathAll(`//*[contains(@lsdata, ${xpathLiteral(fp.sidBase)}) or contains(@data-hint, ${xpathLiteral(fp.sidBase)})]`));
+  if (fp.tech) add(xpathAll(`//*[contains(@lsdata, ${xpathLiteral(fp.tech)}) or contains(@data-hint, ${xpathLiteral(fp.tech)})]`));
+  if (fp.elId) {
+    const byId = document.getElementById(fp.elId);
+    if (byId) set.add(byId);
+  }
+  if (fp.href) add(xpathAll(`//*[contains(@href, ${xpathLiteral(fp.href)})]`));
+  if (fp.title) add(xpathAll(`//*[@title=${xpathLiteral(fp.title)}]`));
+  if (fp.ariaLabel) add(xpathAll(`//*[@aria-label=${xpathLiteral(fp.ariaLabel)}]`));
+  if (fp.text) {
+    add(xpathAll(`//*[normalize-space(text())=${xpathLiteral(fp.text)}]`));
+    add(xpathAll(`//*[contains(@class,'lsTabStrip')][contains(., ${xpathLiteral(fp.text)})]`));
+  }
+  if (fp.rowLabel) add(xpathAll(`//tr[contains(., ${xpathLiteral(fp.rowLabel)})]`));
+  return [...set];
+}
+
+/** Mejor candidato del frame para una huella: devuelve {el, score}. */
+function bestMatchFor(fp) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const el of collectCandidates(fp)) {
+    const s = scoreCandidate(el, fp);
+    if (s > bestScore) {
+      bestScore = s;
+      best = el;
+    }
+  }
+  return { el: best, score: bestScore === -Infinity ? 0 : bestScore };
+}
+
+// ---------------------------------------------------------------
+// Captura de acciones del usuario
+// ---------------------------------------------------------------
 
 let recordingActive = false;
 const recordedValueByEl = new WeakMap();
 
-function onRecordClick(e) {
-  if (!recordingActive) return;
-  const el = e.target;
-  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return; // los inputs se capturan por 'change'
-  const desc = describeClickTarget(el);
-  if (!desc) return;
+function sendStep(step) {
   try {
-    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: desc.kind === "save" ? "click" : "click", ...desc } });
+    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { ...step, t: Date.now() } });
   } catch {
     // El panel puede no estar escuchando en este instante; se ignora.
   }
 }
 
-function onRecordChange(e) {
-  if (!recordingActive) return;
-  const el = e.target;
-  if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return;
-  if (el.type === "checkbox" || el.type === "radio") {
-    const row = el.closest("tr");
-    const label = row ? row.textContent.trim() : el.getAttribute("title") || el.getAttribute("aria-label") || "";
-    if (!label) return;
-    try {
-      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "check", label: label.slice(0, 80), checked: el.checked } });
-    } catch {
-      /* panel no escuchando */
-    }
-    return;
-  }
-  const desc = describeFieldElement(el);
-  if (!desc) return;
-  // Evita registrar dos veces el mismo valor si el 'change' se dispara más
-  // de una vez sin que el usuario haya vuelto a tocar el campo.
-  if (recordedValueByEl.get(el) === el.value) return;
-  recordedValueByEl.set(el, el.value);
-  try {
-    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "fill", ...desc, value: el.value } });
-  } catch {
-    /* panel no escuchando */
-  }
+/** Etiqueta legible del elemento, solo para mostrar en la tabla de pasos. */
+function humanLabelFor(el, fp) {
+  if (fp.rowLabel && fp.inVirtualTable) return fp.rowLabel;
+  return fp.title || fp.ariaLabel || fp.rowLabel || (fp.text || "").slice(0, 60) || fp.tech || fp.elId || fp.tag;
+}
+
+/** Clasificación gruesa (solo para que el paso se describa bien en la UI y
+ * para elegir la estrategia de búsqueda en tablas virtualizadas). */
+function kindOf(el, fp) {
+  if (fp.inVirtualTable) return "tableField";
+  if (el.closest && el.closest("a[href*='#']")) return "tile";
+  if (el.closest && el.closest("[class*='lsTabStrip']")) return "tab";
+  const blob = (el.getAttribute("data-hint") || "") + (el.getAttribute("lsdata") || "");
+  if (/tbar\[0\]\/btn\[11\]/.test(blob) || /Grabar|Guardar|Save/i.test(fp.title || "")) return "save";
+  if (fp.tech) return "field";
+  if (el.closest && el.closest("tr")) return "row";
+  return "button";
 }
 
 /**
- * SAP GUI for HTML procesa la tecla Enter directamente (dispara su propio
- * round-trip/recarga de pantalla) y a veces eso interrumpe el ciclo normal
- * de blur→'change' del navegador antes de que llegue a dispararse — por
- * eso un campo confirmado con Enter (en vez de Tab o click en otro lado)
- * podía perderse en la grabación. Aquí se captura el valor en el momento
- * del keydown, ANTES de que SAP reaccione. También se detecta Ctrl+S como
- * atajo de Grabar, por si el usuario no clica el botón con el mouse.
+ * Al clicar un ícono, e.target suele ser un <svg>/<span> interno sin
+ * identidad propia; la identidad real (data-hint/lsdata con el SID, el
+ * role, el href) vive en el contenedor. Sube hasta el primer ancestro que
+ * sí tenga con qué identificarse — sin esto, el click en la lupa
+ * "Posicionar" se grababa como un <svg> anónimo imposible de reencontrar.
  */
+function actionableAncestor(el) {
+  let node = el;
+  for (let i = 0; i < 6 && node && node.nodeType === 1; i++) {
+    const hasIdentity =
+      extractSid(node) ||
+      node.getAttribute("role") === "button" ||
+      node.getAttribute("role") === "link" ||
+      (node.tagName === "A" && node.getAttribute("href")) ||
+      node.getAttribute("title") ||
+      node.getAttribute("aria-label");
+    if (hasIdentity) return node;
+    node = node.parentElement;
+  }
+  return el;
+}
+
+function recordInteraction(el, action, extra) {
+  if (!el || el.nodeType !== 1) return;
+  const fp = fingerprintOf(el);
+  const kind = kindOf(el, fp);
+  sendStep({
+    action,
+    kind,
+    fp,
+    label: humanLabelFor(el, fp),
+    tech: fp.tech || undefined,
+    ...extra,
+  });
+}
+
+function onRecordClick(e) {
+  if (!recordingActive) return;
+  const el = e.target;
+  // Los campos no se graban al clicarlos (eso solo posiciona el cursor):
+  // el dato real se captura al confirmarlos (change/focusout/Enter), y los
+  // checkbox/radio por su evento 'change'.
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+  recordInteraction(actionableAncestor(el), "click", { clickType: "single" });
+}
+
+function onRecordDblClick(e) {
+  if (!recordingActive) return;
+  // SAP usa doble click como acción propia (p.ej. lsevents DoubleClick en
+  // las etiquetas de características), así que se graba aparte.
+  recordInteraction(actionableAncestor(e.target), "click", { clickType: "double" });
+}
+
+function onRecordChange(e) {
+  if (!recordingActive) return;
+  const el = e.target;
+  const isField = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
+  if (!isField) return;
+
+  if (el.type === "checkbox" || el.type === "radio") {
+    const fp = fingerprintOf(el);
+    sendStep({
+      action: "check",
+      kind: "check",
+      fp,
+      label: humanLabelFor(el, fp),
+      checked: el.checked,
+    });
+    return;
+  }
+
+  // Evita registrar dos veces el mismo valor cuando llegan varios eventos
+  // (change + focusout + Enter) sin que el usuario haya vuelto a escribir.
+  if (recordedValueByEl.get(el) === el.value) return;
+  recordedValueByEl.set(el, el.value);
+  recordInteraction(el, "fill", { value: el.value });
+}
+
+/** Teclas que en SAP son acciones reales (no texto): F1–F12, Escape,
+ * navegación, y cualquier combinación con Ctrl/Alt/Meta. Se graban tal
+ * cual para poder reproducirlas idénticas. */
+function isFunctionalKey(e) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return true;
+  if (/^F\d{1,2}$/.test(e.key)) return true;
+  return [
+    "Escape",
+    "Enter",
+    "PageUp",
+    "PageDown",
+    "Home",
+    "End",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Insert",
+    "Delete",
+  ].includes(e.key);
+}
+
 function onRecordKeydown(e) {
   if (!recordingActive) return;
   const el = e.target;
+  const isTextField =
+    (el instanceof HTMLInputElement && el.type !== "checkbox" && el.type !== "radio") || el instanceof HTMLTextAreaElement;
 
-  if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
-    try {
-      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "click", kind: "save", label: "Grabar (Ctrl+S)" } });
-    } catch {
-      /* panel no escuchando */
-    }
-    return;
-  }
-
-  if (e.key !== "Enter") return;
-
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    if (el.type === "checkbox" || el.type === "radio") return; // esos van por 'change'
-    const desc = describeFieldElement(el);
-    if (!desc) return;
-    if (recordedValueByEl.get(el) === el.value) return; // ya registrado (p.ej. por 'change')
+  // Enter dentro de un campo: SAP procesa el Enter directamente (dispara su
+  // propio round-trip) y eso puede saltarse el 'change' nativo antes de que
+  // llegue a dispararse — se captura el valor AQUÍ, antes de que pase.
+  if (e.key === "Enter" && isTextField && recordedValueByEl.get(el) !== el.value) {
     recordedValueByEl.set(el, el.value);
-    try {
-      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "fill", ...desc, value: el.value } });
-    } catch {
-      /* panel no escuchando */
-    }
-    return;
+    recordInteraction(el, "fill", { value: el.value });
   }
 
-  // Enter fuera de un campo de texto (p.ej. una fila de diálogo con foco):
-  // equivale a un click sobre lo que tenga el foco en ese momento.
-  const desc = describeClickTarget(el);
-  if (!desc) return;
-  try {
-    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "click", ...desc } });
-  } catch {
-    /* panel no escuchando */
-  }
+  // Tab sin modificadores se omite: es solo mover el cursor, y el paso de
+  // llenado ya confirma el campo con Tab al reproducir.
+  if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) return;
+  if (!isFunctionalKey(e)) return;
+
+  // Escribir texto dentro de un campo no se graba tecla por tecla (se graba
+  // el valor final), pero las teclas funcionales sí, con su target.
+  const fp = fingerprintOf(el);
+  sendStep({
+    action: "key",
+    kind: "key",
+    fp,
+    label: `${e.ctrlKey ? "Ctrl+" : ""}${e.altKey ? "Alt+" : ""}${e.shiftKey ? "Shift+" : ""}${e.key}`,
+    key: e.key,
+    code: e.code,
+    keyCode: e.keyCode,
+    ctrl: e.ctrlKey,
+    alt: e.altKey,
+    shift: e.shiftKey,
+    meta: e.metaKey,
+  });
 }
 
 function startRecording() {
   if (recordingActive) return;
   recordingActive = true;
   document.addEventListener("click", onRecordClick, true);
+  document.addEventListener("dblclick", onRecordDblClick, true);
   document.addEventListener("change", onRecordChange, true);
-  // Respaldo de 'change': algunos controles de SAP no lo disparan de forma
-  // nativa al salir del campo, pero sí pierden el foco. onRecordChange ya
-  // deduplica por valor (recordedValueByEl), así que no hay riesgo de
-  // registrar el mismo dato dos veces si ambos eventos llegan a disparar.
+  // Respaldo de 'change': algunos controles de SAP no lo disparan al salir
+  // del campo, pero sí pierden el foco. El deduplicado por valor evita
+  // registrar el mismo dato dos veces.
   document.addEventListener("focusout", onRecordChange, true);
   document.addEventListener("keydown", onRecordKeydown, true);
 }
@@ -699,93 +871,171 @@ function startRecording() {
 function stopRecording() {
   recordingActive = false;
   document.removeEventListener("click", onRecordClick, true);
+  document.removeEventListener("dblclick", onRecordDblClick, true);
   document.removeEventListener("change", onRecordChange, true);
   document.removeEventListener("focusout", onRecordChange, true);
   document.removeEventListener("keydown", onRecordKeydown, true);
 }
 
-/** Ejecuta un paso grabado (reproducción). Reutiliza fieldSelectors,
- * findClassificationValueInputAsync, SAVE_BUTTON_SELECTORS, etc. — la misma
- * lógica ya probada del apartado "Modificar material", solo que ahora
- * parametrizada por lo que quedó grabado en vez de un campo fijo. */
-/**
- * @param {boolean} dryRun Modo prueba: los pasos de navegación (tile,
- * pestaña, fila de diálogo) SÍ se clican de verdad (hace falta para poder
- * validar los pasos siguientes, que dependen de estar en la pantalla
- * correcta), pero los pasos que escriben datos (fill/check) solo
- * VERIFICAN que el campo existe sin modificarlo, y "Grabar" nunca se
- * clica — así no se guarda ningún cambio real en SAP.
- */
-async function executeRecordedStep(step, overrideValue, dryRun = false) {
-  const value = overrideValue !== undefined && overrideValue !== null ? overrideValue : step.value;
-  if (step.action === "fill") {
-    if (step.kind === "field") {
-      const el = findFirstVisible(fieldSelectors(step.tech), (n) => !n.disabled);
-      if (!el) return { ok: false, trace: `No se encontró el campo técnico '${step.tech}'.` };
-      if (dryRun) return { ok: true, trace: `Campo '${step.tech}' encontrado (valor actual: '${el.value}'). No se modificó (modo prueba).` };
-      fillAndCommit(el, value, "Tab");
-      return { ok: true };
-    }
-    if (step.kind === "tableField") {
-      const { input, trace } = await findClassificationValueInputAsync(step.label);
-      if (!input) return { ok: false, trace: `No se encontró la fila '${step.label}'. ${trace.join(" | ")}` };
-      if (dryRun) return { ok: true, trace: `Fila '${step.label}' encontrada (valor actual: '${input.value}'). No se modificó (modo prueba).` };
-      fillAndCommit(input, value, "Tab");
-      return { ok: true };
-    }
-    return { ok: false, trace: "Paso 'fill' sin campo reconocible." };
+// ---------------------------------------------------------------
+// Reproducción exacta en dos fases: MATCH_STEP puntúa (sin tocar nada) y
+// RUN_MATCHED ejecuta solo en el frame ganador.
+// ---------------------------------------------------------------
+
+const matchCache = new Map();
+
+/** Si el mejor candidato es el contenedor y no el campo en sí (pasa cuando
+ * el SID vive en un wrapper), baja al <input>/<select> editable de adentro,
+ * o al de su misma fila. */
+function resolveEditableTarget(el, action) {
+  const wantsCheckbox = action === "check";
+  const usable = (n) =>
+    n && isVisible(n) && !n.disabled && (wantsCheckbox ? n.type === "checkbox" : n.type !== "checkbox" && n.type !== "radio");
+
+  if ((el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") && usable(el)) return el;
+
+  const inside = Array.from(el.querySelectorAll("input, textarea, select")).find(usable);
+  if (inside) return inside;
+
+  const row = el.closest ? el.closest("tr") : null;
+  if (row) {
+    const inRow = Array.from(row.querySelectorAll("input, textarea, select")).find(usable);
+    if (inRow) return inRow;
   }
+  return el;
+}
+
+/** Compatibilidad: plantillas grabadas antes de que existiera la huella
+ * completa (solo tech/label) se convierten a una huella mínima. */
+function fingerprintFromStep(step) {
+  if (step.fp) return step.fp;
+  const fp = {};
+  if (step.tech) fp.tech = step.tech;
+  if (step.label) {
+    if (step.kind === "tableField") fp.rowLabel = step.label;
+    else {
+      fp.title = step.label;
+      fp.text = step.label;
+    }
+  }
+  if (step.hash) fp.href = step.hash;
+  if (step.kind === "tableField") fp.inVirtualTable = true;
+  return fp;
+}
+
+async function matchRecordedStep(step) {
+  const fp = fingerprintFromStep(step);
+
+  // Tablas virtualizadas: la fila puede no existir aún en el DOM. Se usa la
+  // misma lógica ya probada (botón Posicionar y, si no, flechas) para
+  // traerla a la vista antes de puntuar.
+  if (fp.inVirtualTable && fp.rowLabel && step.action === "fill") {
+    const { input, trace } = await findClassificationValueInputAsync(fp.rowLabel);
+    if (!input) return { ok: false, score: 0, trace: `Fila '${fp.rowLabel}' no localizada. ${trace.join(" | ")}` };
+    const token = String(Math.random()).slice(2);
+    matchCache.set(token, input);
+    return { ok: true, score: scoreCandidate(input, fp) + 40, token, trace: `Fila '${fp.rowLabel}' localizada.` };
+  }
+
+  // Paso de tecla sin un target reconocible: se despacha al elemento con
+  // foco, así que siempre puede ejecutarse (puntaje bajo, por si otro frame
+  // tiene un target mejor).
+  let { el, score } = bestMatchFor(fp);
+  if (el && (step.action === "fill" || step.action === "check")) {
+    el = resolveEditableTarget(el, step.action);
+  }
+  if (!el || score < MATCH_MIN_SCORE) {
+    if (step.action === "key") {
+      const token = String(Math.random()).slice(2);
+      matchCache.set(token, document.activeElement || document.body);
+      return { ok: true, score: 1, token, trace: "Tecla al elemento con foco (sin target exacto)." };
+    }
+    return { ok: false, score: Math.max(score, 0), trace: `Sin coincidencia suficiente (mejor puntaje: ${Math.max(score, 0)}).` };
+  }
+
+  const token = String(Math.random()).slice(2);
+  matchCache.set(token, el);
+  return { ok: true, score, token, trace: `Coincidencia con puntaje ${score}.` };
+}
+
+/** Dispara una secuencia de teclado completa (keydown/keypress/keyup) con
+ * los modificadores tal como se grabaron. */
+function dispatchRecordedKey(el, step) {
+  const opts = {
+    key: step.key,
+    code: step.code || step.key,
+    keyCode: step.keyCode,
+    which: step.keyCode,
+    ctrlKey: !!step.ctrl,
+    altKey: !!step.alt,
+    shiftKey: !!step.shift,
+    metaKey: !!step.meta,
+    bubbles: true,
+    cancelable: true,
+  };
+  el.dispatchEvent(new KeyboardEvent("keydown", opts));
+  el.dispatchEvent(new KeyboardEvent("keypress", opts));
+  el.dispatchEvent(new KeyboardEvent("keyup", opts));
+}
+
+/** Doble click real: la secuencia completa que espera el navegador. */
+function dispatchDoubleClick(el) {
+  const opts = { bubbles: true, cancelable: true, view: window };
+  el.dispatchEvent(new MouseEvent("mousedown", opts));
+  el.dispatchEvent(new MouseEvent("mouseup", opts));
+  el.dispatchEvent(new MouseEvent("click", { ...opts, detail: 1 }));
+  el.dispatchEvent(new MouseEvent("mousedown", opts));
+  el.dispatchEvent(new MouseEvent("mouseup", opts));
+  el.dispatchEvent(new MouseEvent("click", { ...opts, detail: 2 }));
+  el.dispatchEvent(new MouseEvent("dblclick", { ...opts, detail: 2 }));
+}
+
+/**
+ * @param {boolean} dryRun Modo prueba: los pasos de navegación (click en
+ * tile, pestaña, fila, tecla) SÍ se ejecutan — hacen falta para poder
+ * validar los pasos siguientes —, pero los que escriben datos (fill/check)
+ * solo verifican, y "Grabar" nunca se presiona.
+ */
+async function runMatchedStep(token, step, overrideValue, dryRun = false) {
+  const el = matchCache.get(token);
+  matchCache.delete(token);
+  if (!el || !el.isConnected) return { ok: false, trace: "El elemento localizado ya no está en la página." };
+
+  const value = overrideValue !== undefined && overrideValue !== null ? overrideValue : step.value;
+
+  if (step.action === "fill") {
+    if (dryRun) return { ok: true, trace: `Campo localizado (valor actual: '${el.value}'). No se modificó (modo prueba).` };
+    if (el instanceof HTMLSelectElement) {
+      el.value = value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true };
+    }
+    fillAndCommit(el, value, "Tab");
+    return { ok: true };
+  }
+
   if (step.action === "check") {
-    const xp = `//tr[contains(., ${xpathLiteral(step.label.slice(0, 30))})]//input[@type='checkbox']`;
-    const el = findFirstVisible([{ type: "xpath", value: xp }]);
-    if (!el) return { ok: false, trace: `No se encontró el checkbox de '${step.label}'.` };
-    if (dryRun) return { ok: true, trace: `Checkbox de '${step.label}' encontrado (estado actual: ${el.checked ? "marcado" : "desmarcado"}). No se modificó (modo prueba).` };
+    if (dryRun) {
+      return { ok: true, trace: `Checkbox localizado (estado actual: ${el.checked ? "marcado" : "desmarcado"}). No se modificó (modo prueba).` };
+    }
     if (el.checked !== step.checked) el.click();
     return { ok: true };
   }
-  if (step.action === "click") {
-    switch (step.kind) {
-      case "tile": {
-        const selectors = [
-          { type: "xpath", value: `//a[contains(@href, ${xpathLiteral(step.hash || "")})]` },
-          { type: "xpath", value: `//*[contains(@aria-label, ${xpathLiteral(step.label || "")})]` },
-        ];
-        const el = findFirstVisible(selectors);
-        if (!el) return { ok: false, trace: `No se encontró el tile '${step.label}'.` };
-        el.click(); // navegación: se clica igual en modo prueba (no escribe datos)
-        return { ok: true };
-      }
-      case "tab": {
-        const xp = `//*[contains(@class, 'lsTabStrip')][contains(., ${xpathLiteral(step.label)})]`;
-        const el = findFirstVisible([{ type: "xpath", value: xp }]);
-        if (!el) return { ok: false, trace: `No se encontró la pestaña '${step.label}'.` };
-        el.click(); // navegación: se clica igual en modo prueba
-        return { ok: true };
-      }
-      case "row": {
-        const prefix = step.label.slice(0, 30);
-        const xp = `//tr[contains(., ${xpathLiteral(prefix)})]`;
-        const el = findFirstVisible([{ type: "xpath", value: xp }]);
-        if (!el) return { ok: false, trace: `No se encontró la fila '${prefix}'.` };
-        el.click(); // navegación (p.ej. selección de vista): se clica igual en modo prueba
-        return { ok: true };
-      }
-      case "save": {
-        const el = findFirstVisible(SAVE_BUTTON_SELECTORS);
-        if (!el) return { ok: false, trace: "No se encontró el botón Grabar." };
-        if (dryRun) return { ok: true, trace: "Botón Grabar encontrado. NO se presionó (modo prueba)." };
-        el.click();
-        return { ok: true };
-      }
-      default: {
-        const xp = `//*[contains(@title, ${xpathLiteral(step.label)}) or contains(@aria-label, ${xpathLiteral(step.label)}) or normalize-space(text())=${xpathLiteral(step.label)}]`;
-        const el = findFirstVisible([{ type: "xpath", value: xp }]);
-        if (!el) return { ok: false, trace: `No se encontró el botón '${step.label}'.` };
-        el.click(); // botón genérico (p.ej. "Posicionar", "Continuar"): se clica igual en modo prueba
-        return { ok: true };
-      }
-    }
+
+  if (step.action === "key") {
+    dispatchRecordedKey(el, step);
+    return { ok: true };
   }
+
+  if (step.action === "click") {
+    if (step.kind === "save" && dryRun) {
+      return { ok: true, trace: "Botón Grabar localizado. NO se presionó (modo prueba)." };
+    }
+    if (step.clickType === "double") dispatchDoubleClick(el);
+    else el.click();
+    return { ok: true };
+  }
+
   return { ok: false, trace: `Acción de paso desconocida: ${step.action}.` };
 }
 
@@ -801,9 +1051,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Si un frame NUEVO aparece durante una grabación en curso (p.ej. el
-// <iframe> de la transacción que se crea al abrir un tile desde el
-// Launchpad), este frame arranca sin haber recibido el START_RECORDING —
-// por eso se consulta el flag persistido apenas carga, para sumarse solo.
+// <iframe> de la transacción que se crea al abrir un tile), arranca sin
+// haber recibido el START_RECORDING — por eso consulta el flag persistido
+// apenas carga, para sumarse solo.
 try {
   chrome.storage.local.get("macroRecordingActive", (data) => {
     if (data && data.macroRecordingActive) startRecording();

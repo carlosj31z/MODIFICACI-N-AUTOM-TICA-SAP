@@ -156,19 +156,44 @@ inicio cada segundo mientras está activa (cubre el caso de un `<iframe>`
 nuevo que aparece justo cuando ya estás escribiendo, antes de que le llegue
 su propio aviso).
 
-### Cómo identifica un campo "cualquiera" sin que se le programe a mano
+**v2.4.0 — detección exacta de teclado y mouse.** La grabadora dejó de
+depender de un solo identificador por paso; ahora guarda una *huella*
+completa del elemento y al reproducir elige el candidato con mayor
+puntaje. Los cambios:
 
-- Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)
-  directamente del `data-hint`/`lsdata` del campo que tocaste, con una
-  expresión regular sobre el atributo crudo — no hace falta parsear el JSON
-  completo, el nombre del campo queda legible como texto plano incluso
-  dentro de JSON anidado/escapado.
-- Filas de tabla (Clasificación y similares, donde el nombre técnico es el
-  mismo para toda la tabla): usa el texto de la celda vecina (la etiqueta,
-  ej. "EVENTO") como identificador — misma lógica que ya usa el apartado
-  "Modificar material" para Clasificación, con el botón "Posicionar" y la
-  navegación por flechas como respaldo si la fila no está renderizada.
-- Tiles, pestañas, botones, filas de diálogos: por su `href`/texto visible.
+- **Identidad principal: el SID de SAP.** Cada control de SAP GUI for HTML
+  lleva su ruta canónica dentro del `lsdata`/`data-hint`, por ejemplo
+  `wnd[0]/usr/subSUBSCR_BEWERT:SAPLCTMS:5000/tabsTABSTRIP_CHAR/tabpTAB1/
+  ssubTABSTRIP_CHAR_GR:SAPLCTMS:5100/tblSAPLCTMSCHARS_S/ctxtRCTMS-MWERT[1,8]`.
+  Esa ruta es única en la pantalla, así que se graba tal cual, más una
+  variante sin las coordenadas `[fila,columna]` (`sidBase`) que sobrevive
+  cuando la tabla se desplaza y la misma celda cambia de índice.
+- **Huella completa por paso**: junto al SID se guardan el nombre técnico,
+  el `dynp` (programa/dynpro/transacción), `id`, `tag`, `type`, `name`,
+  `role`, `title`, `aria-label`, texto visible, `href`, si está dentro de
+  una tabla virtualizada, la etiqueta de su fila y sus clases CSS.
+- **Coincidencia por puntaje, no por igualdad exacta**: al reproducir, cada
+  candidato suma puntos (SID exacto 100, `sidBase` 55, etiqueta de fila 40,
+  `href` 35, nombre técnico 25, `title` 20, `aria-label` 18, texto 15, …) y
+  resta si está invisible (−60) o deshabilitado (−30). Solo se ejecuta si
+  supera el umbral mínimo (35), de modo que un elemento "parecido" nunca se
+  confunde con el correcto.
+- **Dos fases entre frames**: primero se pregunta a *todos* los iframes cuál
+  es su mejor puntaje (`MATCH_STEP`) y recién después se ordena ejecutar
+  (`RUN_MATCHED`) al frame ganador. Antes cada frame decidía por su cuenta,
+  lo que podía ejecutar el paso dos veces o en el frame equivocado. Si dos
+  frames empatan, el log lo marca con `⚠ empate entre frames`.
+- **Teclado**: se graban Enter, Escape, F1–F12, flechas, Re Pág/Av Pág,
+  Inicio/Fin, Insert/Supr y cualquier combinación con Ctrl/Alt/Meta
+  (incluido Ctrl+S como Grabar). El Tab sin modificadores se ignora a
+  propósito: solo confirma el campo, que ya se graba como paso de llenado.
+- **Mouse**: además del click simple se capturan doble click y los cambios
+  de `<select>` y de checkbox. Si haces click sobre el ícono o el texto
+  interno de un botón, se sube hasta el contenedor que sí lleva identidad
+  (`actionableAncestor`), en vez de grabar un `<span>` anónimo.
+- Las filas de tablas virtualizadas (Clasificación) siguen resolviéndose con
+  el botón nativo "Posicionar" y la navegación por flechas, la misma lógica
+  ya probada del apartado "Modificar material".
 
 Como MM01 y MM02 usan el mismo motor de renderizado (SAP GUI for HTML
 clásico) y los campos se identifican por lo que la propia pantalla expone
@@ -177,11 +202,12 @@ funciona igual en ambas sin necesitar código específico por transacción.
 
 ### Limitación conocida
 
-Es una función nueva (v2.0.0): al reproducir, cada paso se busca por su
-identificador grabado (nombre técnico o etiqueta de fila) con reintentos,
-pero una vista muy distinta a las ya probadas (Clasificación, campos básicos)
+Al reproducir, cada paso se busca por su huella grabada con reintentos, pero
+una vista muy distinta a las ya probadas (Clasificación, campos básicos)
 podría necesitar un ajuste puntual la primera vez que falle — el log de
-diagnóstico dice exactamente qué paso no se pudo ejecutar y por qué.
+diagnóstico dice exactamente qué paso no se pudo ejecutar, con qué puntaje
+quedó el mejor candidato y en qué frame. Valida siempre una plantilla nueva
+con "🧪 Probar plantilla" antes de correrla sobre una lista real.
 
 ## Limitación conocida y cómo probarla
 
