@@ -27,6 +27,8 @@ const macroEls = {
   deleteTemplateBtn: document.getElementById("macroDeleteTemplateBtn"),
   exportBtn: document.getElementById("macroExportBtn"),
   importInput: document.getElementById("macroImportInput"),
+  testMaterialInput: document.getElementById("macroTestMaterialInput"),
+  testBtn: document.getElementById("macroTestBtn"),
   previewBody: document.getElementById("macroPreviewBody"),
 
   addRowBtn: document.getElementById("macroAddRowBtn"),
@@ -357,6 +359,64 @@ macroEls.importInput.addEventListener("change", async (e) => {
   }
 });
 
+/**
+ * Modo prueba: recorre los pasos de la plantilla seleccionada contra un
+ * material real solo para VERIFICAR que cada campo/fila/botón se
+ * encuentra — no escribe valores ni presiona Grabar (ver dryRun en
+ * executeRecordedStep, content.js). Al terminar, regresa a la pantalla
+ * inicial para dejar la sesión limpia.
+ */
+macroEls.testBtn.addEventListener("click", async () => {
+  const name = macroEls.templateSelect.value;
+  if (!name) {
+    macroLog("Selecciona una plantilla para probar.");
+    return;
+  }
+  const templates = await loadTemplates();
+  const steps = templates[name];
+  if (!steps || steps.length === 0) {
+    macroLog("La plantilla seleccionada no tiene pasos.");
+    return;
+  }
+  const material = macroEls.testMaterialInput.value.trim();
+  if (!material) {
+    macroLog("Escribe un material de prueba antes de probar la plantilla.");
+    return;
+  }
+  const tab = await getActiveSapTab();
+  if (!tab) {
+    macroLog("No se detecta ninguna pestaña activa. Abre/enfoca la pestaña de SAP.");
+    return;
+  }
+  if (!tab.url || !tab.url.includes(SAP_HOST)) {
+    macroLog("⚠️ Aviso: la pestaña activa no parece ser Fiori/SAP.");
+  }
+
+  macroSetControlsEnabled(false);
+  macroLog(`[PRUEBA] Validando "${name}" contra el material ${material} — no se escriben valores ni se presiona Grabar.`);
+
+  let ok = 0;
+  let fail = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const overrideValue = macroOverrideFor(step, material, "");
+    const res = await macroRunStep(tab.id, step, overrideValue, 12000, true);
+    const { accion, detalle } = describeStep(step);
+    if (res.ok) {
+      ok++;
+      macroLog(`[PRUEBA] Paso ${i + 1} (${accion} ${detalle}): OK${res.trace ? " — " + res.trace : ""}`);
+    } else {
+      fail++;
+      macroLog(`[PRUEBA] ERROR paso ${i + 1} (${accion} ${detalle}): ${res.trace || "no encontrado"}`);
+    }
+    await sleep(300);
+  }
+
+  macroLog(`[PRUEBA] Terminado: ${ok}/${steps.length} paso(s) validados, ${fail} con error. No se guardó ningún cambio.`);
+  await safeAbortAndReturnHome(tab.id, macroLog);
+  macroSetControlsEnabled(true);
+});
+
 // ---------------------------------------------------------------
 // Grilla de materiales (Material, Centro) para aplicar la plantilla
 // ---------------------------------------------------------------
@@ -482,6 +542,7 @@ function macroSetControlsEnabled(enabled) {
   macroEls.addRowBtn.disabled = !enabled;
   macroEls.clearGridBtn.disabled = !enabled;
   macroEls.templateSelect.disabled = !enabled;
+  macroEls.testBtn.disabled = !enabled;
 }
 
 function macroUpdateProgress(done, total, etaMs) {
@@ -497,12 +558,14 @@ function macroUpdateProgress(done, total, etaMs) {
 }
 
 /** Ejecuta un paso contra la pestaña con reintentos — mismo patrón que
- * waitFor() en sidepanel.js, pero genérico sobre EXECUTE_STEP. */
-async function macroRunStep(tabId, step, overrideValue, timeoutMs = 12000) {
+ * waitFor() en sidepanel.js, pero genérico sobre EXECUTE_STEP. Con
+ * dryRun:true, content.js navega igual (tiles/pestañas/filas) pero no
+ * escribe valores ni presiona Grabar — ver executeRecordedStep. */
+async function macroRunStep(tabId, step, overrideValue, timeoutMs = 12000, dryRun = false) {
   const deadline = Date.now() + timeoutMs;
   let last = { ok: false };
   do {
-    last = await broadcastOnce(tabId, { type: "EXECUTE_STEP", step, overrideValue });
+    last = await broadcastOnce(tabId, { type: "EXECUTE_STEP", step, overrideValue, dryRun });
     if (last.ok) return last;
     await sleep(250);
   } while (Date.now() < deadline);

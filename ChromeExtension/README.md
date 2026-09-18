@@ -125,6 +125,16 @@ Las plantillas también se pueden **exportar** (botón "⬇ Exportar", baja un
 compañeros o entre distintos perfiles de Chrome, ya que `chrome.storage.local`
 es por perfil y no viaja solo.
 
+**Modo prueba ("🧪 Probar plantilla")**: escribe un material real y click en
+"Probar" — recorre todos los pasos de la plantilla seleccionada, pero en vez
+de escribir los valores solo **verifica** que cada campo/fila/botón se
+encuentra (te dice el valor actual del campo sin tocarlo), y nunca presiona
+Grabar. Sí navega de verdad por las pantallas (tiles, pestañas, filas de
+diálogos) porque los pasos siguientes dependen de estar en la pantalla
+correcta — lo único que NO hace es escribir datos ni guardar. Es la forma
+recomendada de validar una plantilla nueva antes de correrla en serio sobre
+una lista de materiales.
+
 ### Cómo identifica un campo "cualquiera" sin que se le programe a mano
 
 - Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)

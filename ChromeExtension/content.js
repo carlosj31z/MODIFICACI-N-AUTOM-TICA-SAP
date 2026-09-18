@@ -475,7 +475,7 @@ async function handleMessage(msg, sendResponse) {
       break;
     }
     case "EXECUTE_STEP": {
-      const result = await executeRecordedStep(msg.step, msg.overrideValue);
+      const result = await executeRecordedStep(msg.step, msg.overrideValue, msg.dryRun);
       sendResponse(result);
       break;
     }
@@ -638,18 +638,28 @@ function stopRecording() {
  * findClassificationValueInputAsync, SAVE_BUTTON_SELECTORS, etc. — la misma
  * lógica ya probada del apartado "Modificar material", solo que ahora
  * parametrizada por lo que quedó grabado en vez de un campo fijo. */
-async function executeRecordedStep(step, overrideValue) {
+/**
+ * @param {boolean} dryRun Modo prueba: los pasos de navegación (tile,
+ * pestaña, fila de diálogo) SÍ se clican de verdad (hace falta para poder
+ * validar los pasos siguientes, que dependen de estar en la pantalla
+ * correcta), pero los pasos que escriben datos (fill/check) solo
+ * VERIFICAN que el campo existe sin modificarlo, y "Grabar" nunca se
+ * clica — así no se guarda ningún cambio real en SAP.
+ */
+async function executeRecordedStep(step, overrideValue, dryRun = false) {
   const value = overrideValue !== undefined && overrideValue !== null ? overrideValue : step.value;
   if (step.action === "fill") {
     if (step.kind === "field") {
       const el = findFirstVisible(fieldSelectors(step.tech), (n) => !n.disabled);
       if (!el) return { ok: false, trace: `No se encontró el campo técnico '${step.tech}'.` };
+      if (dryRun) return { ok: true, trace: `Campo '${step.tech}' encontrado (valor actual: '${el.value}'). No se modificó (modo prueba).` };
       fillAndCommit(el, value, "Tab");
       return { ok: true };
     }
     if (step.kind === "tableField") {
       const { input, trace } = await findClassificationValueInputAsync(step.label);
       if (!input) return { ok: false, trace: `No se encontró la fila '${step.label}'. ${trace.join(" | ")}` };
+      if (dryRun) return { ok: true, trace: `Fila '${step.label}' encontrada (valor actual: '${input.value}'). No se modificó (modo prueba).` };
       fillAndCommit(input, value, "Tab");
       return { ok: true };
     }
@@ -659,6 +669,7 @@ async function executeRecordedStep(step, overrideValue) {
     const xp = `//tr[contains(., ${xpathLiteral(step.label.slice(0, 30))})]//input[@type='checkbox']`;
     const el = findFirstVisible([{ type: "xpath", value: xp }]);
     if (!el) return { ok: false, trace: `No se encontró el checkbox de '${step.label}'.` };
+    if (dryRun) return { ok: true, trace: `Checkbox de '${step.label}' encontrado (estado actual: ${el.checked ? "marcado" : "desmarcado"}). No se modificó (modo prueba).` };
     if (el.checked !== step.checked) el.click();
     return { ok: true };
   }
@@ -671,14 +682,14 @@ async function executeRecordedStep(step, overrideValue) {
         ];
         const el = findFirstVisible(selectors);
         if (!el) return { ok: false, trace: `No se encontró el tile '${step.label}'.` };
-        el.click();
+        el.click(); // navegación: se clica igual en modo prueba (no escribe datos)
         return { ok: true };
       }
       case "tab": {
         const xp = `//*[contains(@class, 'lsTabStrip')][contains(., ${xpathLiteral(step.label)})]`;
         const el = findFirstVisible([{ type: "xpath", value: xp }]);
         if (!el) return { ok: false, trace: `No se encontró la pestaña '${step.label}'.` };
-        el.click();
+        el.click(); // navegación: se clica igual en modo prueba
         return { ok: true };
       }
       case "row": {
@@ -686,12 +697,13 @@ async function executeRecordedStep(step, overrideValue) {
         const xp = `//tr[contains(., ${xpathLiteral(prefix)})]`;
         const el = findFirstVisible([{ type: "xpath", value: xp }]);
         if (!el) return { ok: false, trace: `No se encontró la fila '${prefix}'.` };
-        el.click();
+        el.click(); // navegación (p.ej. selección de vista): se clica igual en modo prueba
         return { ok: true };
       }
       case "save": {
         const el = findFirstVisible(SAVE_BUTTON_SELECTORS);
         if (!el) return { ok: false, trace: "No se encontró el botón Grabar." };
+        if (dryRun) return { ok: true, trace: "Botón Grabar encontrado. NO se presionó (modo prueba)." };
         el.click();
         return { ok: true };
       }
@@ -699,7 +711,7 @@ async function executeRecordedStep(step, overrideValue) {
         const xp = `//*[contains(@title, ${xpathLiteral(step.label)}) or contains(@aria-label, ${xpathLiteral(step.label)}) or normalize-space(text())=${xpathLiteral(step.label)}]`;
         const el = findFirstVisible([{ type: "xpath", value: xp }]);
         if (!el) return { ok: false, trace: `No se encontró el botón '${step.label}'.` };
-        el.click();
+        el.click(); // botón genérico (p.ej. "Posicionar", "Continuar"): se clica igual en modo prueba
         return { ok: true };
       }
     }
