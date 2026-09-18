@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAP MM02 - Modificar material",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Automatiza el llenado de campos en MM02 (SAP GUI for HTML embebido en Fiori) para modificar materiales en masa, sin depender de Chromium externo ni ChromeDriver.",
   "permissions": ["storage", "tabs", "webNavigation", "sidePanel"],
   "host_permissions": ["https://fiori.medifarma.com.pe/*"],

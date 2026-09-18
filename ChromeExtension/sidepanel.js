@@ -107,7 +107,12 @@ async function waitFor(tabId, message, timeoutMs, stepMs = 200) {
 const SETTLE = 350;
 
 async function navigateToMM02(tabId, log) {
-  let res = await waitFor(tabId, { type: "CLICK_TILE" }, 5000);
+  // Chequeo rápido: solo aplica al primer material (recién entrando desde
+  // el Launchpad). Del segundo material en adelante ya estamos dentro de
+  // la transacción (no en el Launchpad), así que no tiene sentido esperar
+  // varios segundos a que aparezca un tile que no va a aparecer — de ahí
+  // la pausa larga que se notaba después de cada guardado exitoso.
+  let res = await waitFor(tabId, { type: "CLICK_TILE" }, 700);
   if (res.ok) {
     log("Tile 'Modificar material' (MM02) localizado. Abriendo...");
     await sleep(SETTLE);
