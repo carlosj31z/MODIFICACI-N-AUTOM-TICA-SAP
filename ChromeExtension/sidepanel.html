@@ -8,83 +8,173 @@
 </head>
 <body>
   <div class="title-row">
-    <h1>Modificar material</h1>
+    <h1 id="pageTitle">Modificar material</h1>
     <button id="reloadExtBtn" class="reload-btn" title="Recargar extensión (después de un git pull). Recuerda refrescar también la pestaña de SAP.">🔄</button>
   </div>
   <div id="tabInfo" class="tab-status">Detectando pestaña activa de SAP…</div>
 
-  <section class="panel">
-    <h2>1. Configuración de esta carga (aplica a todas las filas)</h2>
-    <div class="config-grid">
-      <label class="config-field">
-        Vista
-        <select id="globalVista"></select>
-      </label>
-      <label class="config-field">
-        Campo técnico
-        <input type="text" id="globalCampoTecnico" placeholder="ej. MSTAE, EVENTO" />
-      </label>
-      <div class="config-field config-fixed">
-        Transacción
-        <div class="transaccion-fixed">MM02</div>
+  <div class="mode-tabs">
+    <button id="modeToolBtn" class="mode-tab mode-tab-active">Modificar material</button>
+    <button id="modeMacroBtn" class="mode-tab">Grabar configuración</button>
+  </div>
+
+  <div id="toolSection">
+    <section class="panel">
+      <h2>1. Configuración de esta carga (aplica a todas las filas)</h2>
+      <div class="config-grid">
+        <label class="config-field">
+          Vista
+          <select id="globalVista"></select>
+        </label>
+        <label class="config-field">
+          Campo técnico
+          <input type="text" id="globalCampoTecnico" placeholder="ej. MSTAE, EVENTO" />
+        </label>
+        <div class="config-field config-fixed">
+          Transacción
+          <div class="transaccion-fixed">MM02</div>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="panel">
-    <h2>2. Materiales a procesar</h2>
-    <p class="hint-text hint-compact">
-      Pega filas de Excel (Material, Centro, Valor), edítalas a mano, o carga un .xlsx.
-      Valor vacío = se borra en SAP.
-    </p>
-    <div class="buttons">
-      <button id="addRowBtn">+ Agregar fila</button>
-      <button id="clearGridBtn">🗑 Vaciar tabla</button>
-      <label class="file-label" for="fileInput">📎 Cargar Excel (.xlsx)</label>
-      <input type="file" id="fileInput" accept=".xlsx,.xls" hidden />
-    </div>
-    <div class="table-wrap grid-wrap">
-      <table id="grid">
-        <thead>
-          <tr>
-            <th></th>
-            <th>Material</th>
-            <th>Centro</th>
-            <th>Valor</th>
-            <th>Estado</th>
-            <th>Mensaje</th>
-          </tr>
-        </thead>
-        <tbody id="gridBody"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2>3. Ejecutar</h2>
-    <div class="execute-row">
-      <label class="checkbox">
-        <input type="checkbox" id="detenerCheckbox" />
-        Detener en el primer error
-      </label>
-      <div class="buttons buttons-inline">
-        <button id="startBtn">▶ Iniciar</button>
-        <button id="stopBtn">⏹ Detener</button>
-        <button id="retryBtn">↻ Reintentar errores</button>
+    <section class="panel">
+      <h2>2. Materiales a procesar</h2>
+      <p class="hint-text hint-compact">
+        Pega filas de Excel (Material, Centro, Valor), edítalas a mano, o carga un .xlsx.
+        Valor vacío = se borra en SAP.
+      </p>
+      <div class="buttons">
+        <button id="addRowBtn">+ Agregar fila</button>
+        <button id="clearGridBtn">🗑 Vaciar tabla</button>
+        <label class="file-label" for="fileInput">📎 Cargar Excel (.xlsx)</label>
+        <input type="file" id="fileInput" accept=".xlsx,.xls" hidden />
       </div>
-    </div>
-    <div id="progressWrap" class="progress-wrap" hidden>
-      <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
-      <div id="progressText" class="progress-text"></div>
-    </div>
-  </section>
+      <div class="table-wrap grid-wrap">
+        <table id="grid">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Material</th>
+              <th>Centro</th>
+              <th>Valor</th>
+              <th>Estado</th>
+              <th>Mensaje</th>
+            </tr>
+          </thead>
+          <tbody id="gridBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-  <section class="panel">
-    <h2>Registro</h2>
-    <pre id="log" class="log-collapsed"></pre>
-  </section>
+    <section class="panel">
+      <h2>3. Ejecutar</h2>
+      <div class="execute-row">
+        <label class="checkbox">
+          <input type="checkbox" id="detenerCheckbox" />
+          Detener en el primer error
+        </label>
+        <div class="buttons buttons-inline">
+          <button id="startBtn">▶ Iniciar</button>
+          <button id="stopBtn">⏹ Detener</button>
+          <button id="retryBtn">↻ Reintentar errores</button>
+        </div>
+      </div>
+      <div id="progressWrap" class="progress-wrap" hidden>
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+        <div id="progressText" class="progress-text"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Registro</h2>
+      <pre id="log" class="log-collapsed"></pre>
+    </section>
+  </div>
+
+  <div id="macroSection" hidden>
+    <section class="panel">
+      <h2>1. Grabar</h2>
+      <p class="hint-text hint-compact">
+        Abre tu pestaña de SAP en el Launchpad, dale a "Iniciar grabación" y trabaja normal en SAP:
+        abre MM01 o MM02, elige vistas, completa campos, graba. Cada click y campo que toques queda
+        registrado abajo. Funciona en cualquier vista y en ambas transacciones.
+      </p>
+      <div class="buttons">
+        <button id="macroRecordBtn">● Iniciar grabación</button>
+        <button id="macroStopBtn" disabled>⏹ Detener grabación</button>
+        <button id="macroClearStepsBtn">🗑 Vaciar pasos</button>
+      </div>
+      <div class="table-wrap" style="max-height: 200px;">
+        <table id="macroStepsTable">
+          <thead><tr><th>#</th><th>Acción</th><th>Detalle</th><th>Valor</th></tr></thead>
+          <tbody id="macroStepsBody"></tbody>
+        </table>
+      </div>
+      <div class="buttons" style="margin-top: 8px;">
+        <input type="text" id="macroNameInput" placeholder="Nombre de la plantilla (ej. Bloqueo EVENTO)" />
+        <button id="macroSaveTemplateBtn">💾 Guardar como plantilla</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. Plantillas guardadas</h2>
+      <div class="config-grid">
+        <label class="config-field" style="flex: 2 1 200px;">
+          Plantilla
+          <select id="macroTemplateSelect"></select>
+        </label>
+        <button id="macroDeleteTemplateBtn">🗑 Eliminar plantilla</button>
+      </div>
+      <div class="table-wrap" style="max-height: 150px;">
+        <table id="macroPreviewTable">
+          <thead><tr><th>#</th><th>Acción</th><th>Detalle</th><th>Valor</th></tr></thead>
+          <tbody id="macroPreviewBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>3. Aplicar a materiales</h2>
+      <p class="hint-text hint-compact">
+        Cada fila = un material. Se reproduce la plantilla completa; el paso grabado del campo
+        Material (y Centro, si tu plantilla lo grabó) se reemplaza automáticamente por lo que
+        pongas aquí — el resto de valores se repite tal como se grabó.
+      </p>
+      <div class="buttons">
+        <button id="macroAddRowBtn">+ Agregar fila</button>
+        <button id="macroClearGridBtn">🗑 Vaciar tabla</button>
+      </div>
+      <div class="table-wrap grid-wrap" style="max-height: 240px;">
+        <table id="macroGrid">
+          <thead><tr><th></th><th>Material</th><th>Centro</th><th>Estado</th><th>Mensaje</th></tr></thead>
+          <tbody id="macroGridBody"></tbody>
+        </table>
+      </div>
+      <div class="execute-row">
+        <label class="checkbox">
+          <input type="checkbox" id="macroDetenerCheckbox" />
+          Detener en el primer error
+        </label>
+        <div class="buttons buttons-inline">
+          <button id="macroStartBtn">▶ Iniciar</button>
+          <button id="macroStopRunBtn">⏹ Detener</button>
+          <button id="macroRetryBtn">↻ Reintentar errores</button>
+        </div>
+      </div>
+      <div id="macroProgressWrap" class="progress-wrap" hidden>
+        <div class="progress-track"><div id="macroProgressFill" class="progress-fill"></div></div>
+        <div id="macroProgressText" class="progress-text"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Registro</h2>
+      <pre id="macroLog" class="log-collapsed"></pre>
+    </section>
+  </div>
 
   <script src="lib/xlsx.mini.min.js"></script>
   <script src="sidepanel.js"></script>
+  <script src="macro.js"></script>
 </body>
 </html>

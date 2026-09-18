@@ -80,13 +80,67 @@ hacer `git pull`. Pero nunca hace falta eliminarla y volver a cargarla:
   (`all_frames: true`), incluyendo los `<iframe>` anidados donde SAP GUI for
   HTML renderiza la transacción. Cada frame sabe buscar y llenar sus propios
   campos (por `data-hint`/`lsdata`, igual que hacía Selenium), pero no sabe
-  nada del flujo completo.
-- `sidepanel.js`: contiene toda la orquestación (temporizadores, reintentos,
-  agrupación por material, máquina de estados) — es el equivalente a
-  `ProcessTasksAsync` en `SapAutomationService.cs`. Vive en el side panel (una
-  página normal) en vez del *service worker* para no toparse con el límite de
-  ~30s de inactividad de Manifest V3.
+  nada del flujo completo. También expone la lógica de grabación/reproducción
+  genérica que usa el apartado "Grabar configuración" (ver abajo).
+- `sidepanel.js`: contiene toda la orquestación del apartado "Modificar
+  material" (temporizadores, reintentos, agrupación por material, máquina de
+  estados) — es el equivalente a `ProcessTasksAsync` en
+  `SapAutomationService.cs`. Vive en el side panel (una página normal) en vez
+  del *service worker* para no toparse con el límite de ~30s de inactividad
+  de Manifest V3.
+- `macro.js`: apartado nuevo e independiente ("Grabar configuración", ver
+  abajo). Reutiliza las funciones de comunicación con `content.js` ya
+  declaradas en `sidepanel.js` (`broadcastOnce`, `getActiveSapTab`, `sleep`,
+  etc.) porque ambos `<script>` comparten el mismo scope global de la
+  página — no las duplica ni las modifica.
 - `background.js`: mínimo, solo configura que el ícono abra el side panel.
+
+## Apartado "Grabar configuración" (macro)
+
+Pestaña nueva en el panel, separada del apartado "Modificar material" (que
+sigue intacto). Graba una secuencia completa de pasos —clicks, campos
+llenados, pestañas de vista, checkboxes— mientras trabajas **a mano** en
+cualquier vista de **MM01 (crear material) o MM02 (modificar material)**, y
+la reproduce después sobre una lista de materiales.
+
+1. **Grabar**: click "● Iniciar grabación", trabaja normal en tu pestaña de
+   SAP (abre el tile de MM01 o MM02, elige vistas, completa campos, marca
+   checkboxes, graba), y "⏹ Detener grabación" cuando termines. Cada acción
+   aparece en vivo en la tabla de pasos.
+2. **Guardar como plantilla**: ponle un nombre y guárdala — queda persistida
+   (`chrome.storage.local`), no se pierde al cerrar el panel.
+3. **Aplicar a materiales**: elige la plantilla, carga una tabla de
+   Material/Centro (mismo pegado desde Excel que el otro apartado), e
+   inicia. El paso grabado del campo Material (técnico `RMMG1-MATNR`) y el
+   de Centro (`WERKS`) se sustituyen automáticamente por lo que pongas en
+   cada fila; el resto de valores se repite tal como se grabó.
+
+### Cómo identifica un campo "cualquiera" sin que se le programe a mano
+
+- Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)
+  directamente del `data-hint`/`lsdata` del campo que tocaste, con una
+  expresión regular sobre el atributo crudo — no hace falta parsear el JSON
+  completo, el nombre del campo queda legible como texto plano incluso
+  dentro de JSON anidado/escapado.
+- Filas de tabla (Clasificación y similares, donde el nombre técnico es el
+  mismo para toda la tabla): usa el texto de la celda vecina (la etiqueta,
+  ej. "EVENTO") como identificador — misma lógica que ya usa el apartado
+  "Modificar material" para Clasificación, con el botón "Posicionar" y la
+  navegación por flechas como respaldo si la fila no está renderizada.
+- Tiles, pestañas, botones, filas de diálogos: por su `href`/texto visible.
+
+Como MM01 y MM02 usan el mismo motor de renderizado (SAP GUI for HTML
+clásico) y los campos se identifican por lo que la propia pantalla expone
+(no por selectores fijos que asuman una transacción concreta), la grabación
+funciona igual en ambas sin necesitar código específico por transacción.
+
+### Limitación conocida
+
+Es una función nueva (v2.0.0): al reproducir, cada paso se busca por su
+identificador grabado (nombre técnico o etiqueta de fila) con reintentos,
+pero una vista muy distinta a las ya probadas (Clasificación, campos básicos)
+podría necesitar un ajuste puntual la primera vez que falle — el log de
+diagnóstico dice exactamente qué paso no se pudo ejecutar y por qué.
 
 ## Limitación conocida y cómo probarla
 

@@ -26,6 +26,30 @@ h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
 }
 .reload-btn:hover { background: #eee; }
 
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #ddd;
+}
+.mode-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 8px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #777;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.mode-tab:hover { color: #333; }
+.mode-tab-active {
+  color: #0b62d6;
+  font-weight: 600;
+  border-bottom-color: #0b62d6;
+}
+
 .panel {
   border: 1px solid #ddd;
   border-radius: 6px;

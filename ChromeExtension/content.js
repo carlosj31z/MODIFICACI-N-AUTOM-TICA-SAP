@@ -462,9 +462,249 @@ async function handleMessage(msg, sendResponse) {
       sendResponse({ ok: true });
       break;
     }
+    case "START_RECORDING": {
+      startRecording();
+      chrome.storage.local.set({ macroRecordingActive: true });
+      sendResponse({ ok: true });
+      break;
+    }
+    case "STOP_RECORDING": {
+      stopRecording();
+      chrome.storage.local.set({ macroRecordingActive: false });
+      sendResponse({ ok: true });
+      break;
+    }
+    case "EXECUTE_STEP": {
+      const result = await executeRecordedStep(msg.step, msg.overrideValue);
+      sendResponse(result);
+      break;
+    }
     default:
       sendResponse({ ok: false, error: "Acción desconocida: " + msg.type });
   }
+}
+
+// =================================================================
+// GRABADORA (apartado nuevo, independiente de todo lo anterior): permite
+// grabar CUALQUIER click/cambio de campo que haga el usuario a mano, en
+// cualquier vista de MM01 o MM02, extrayendo un identificador reutilizable
+// (nombre técnico del campo, o etiqueta de fila para tablas tipo
+// Clasificación) para poder reproducir la misma secuencia luego sobre
+// otros materiales. No modifica ni reemplaza nada de lo de arriba: los
+// mensajes FILL_FIELD/CLICK_TILE/etc. de "Modificar material" siguen
+// intactos.
+// =================================================================
+
+/** Busca en un string crudo (data-hint o lsdata) el patrón TABLA-CAMPO que
+ * SAP usa para nombrar técnicamente sus campos (ej. RMMG1-MATNR,
+ * RCTMS-MWERT). Se opera sobre el string crudo del atributo (no hace falta
+ * parsear el JSON: el nombre del campo queda intacto como texto plano
+ * incluso dentro de JSON anidado/escapado). */
+function extractTechFieldFromAttr(raw) {
+  if (!raw) return null;
+  // Prioridad 1: patrón ".../ctxtTABLA-CAMPO[fila,col]" (campo de tabla).
+  let m = raw.match(/([A-Z][A-Z0-9_]{2,9}-[A-Z][A-Z0-9_]{1,25})(?=\[)/);
+  if (m) return m[1];
+  // Prioridad 2: patrón suelto TABLA-CAMPO (campo normal, sin corchetes).
+  m = raw.match(/\b([A-Z][A-Z0-9_]{2,9}-[A-Z][A-Z0-9_]{1,25})\b/);
+  return m ? m[1] : null;
+}
+
+function extractTechnicalField(el) {
+  const dataHint = el.getAttribute("data-hint") || "";
+  const lsdata = el.getAttribute("lsdata") || "";
+  return extractTechFieldFromAttr(dataHint) || extractTechFieldFromAttr(lsdata);
+}
+
+/** Para filas de tabla (Clasificación y similares): el texto de la celda
+ * que NO es la celda del propio campo suele ser la etiqueta ("EVENTO",
+ * "ORIGEN_MATERIAL", etc.) — igual lógica que ya usa findRowInputFor pero
+ * a la inversa (dado el input, encontrar su etiqueta). */
+function getRowLabelText(row, valueEl) {
+  const cells = Array.from(row.children).filter((c) => c.tagName === "TD");
+  const valueCell = valueEl.closest("td");
+  const labelCell = cells.find((td) => td !== valueCell && td.textContent.trim().length > 0);
+  return labelCell ? labelCell.textContent.trim() : null;
+}
+
+/** Identifica un <input>/<textarea> que el usuario acaba de editar:
+ * preferencia por etiqueta de fila (más estable en tablas virtualizadas
+ * como Clasificación, donde el nombre técnico es el mismo para toda fila),
+ * si no hay fila reconocible cae al nombre técnico. */
+function describeFieldElement(el) {
+  const row = el.closest("tr");
+  if (row) {
+    const label = getRowLabelText(row, el);
+    if (label) return { kind: "tableField", label };
+  }
+  const tech = extractTechnicalField(el);
+  if (tech) return { kind: "field", tech };
+  return null;
+}
+
+/** Identifica qué clicó el usuario: tile del Launchpad, pestaña de vista,
+ * botón Grabar, fila (selección de vistas, resultados de Posicionar), o
+ * botón genérico — en ese orden de especificidad. */
+function describeClickTarget(el) {
+  const tile = el.closest("a[href*='#']");
+  if (tile) {
+    const href = tile.getAttribute("href") || "";
+    const hashMatch = href.match(/#([^?]+)/);
+    const label = (tile.getAttribute("aria-label") || tile.title || tile.textContent || "").trim();
+    if (label || hashMatch) return { kind: "tile", label: label.slice(0, 80), hash: hashMatch ? hashMatch[1] : href };
+  }
+
+  const tab = el.closest("[class*='lsTabStrip']");
+  if (tab) {
+    const text = tab.textContent.trim();
+    if (text) return { kind: "tab", label: text.slice(0, 80) };
+  }
+
+  const hintBlob = (el.getAttribute("data-hint") || "") + (el.getAttribute("lsdata") || "");
+  const title = el.getAttribute("title") || el.getAttribute("aria-label") || "";
+  if (/tbar\[0\]\/btn\[11\]/.test(hintBlob) || /Grabar|Guardar|Save/i.test(title)) {
+    return { kind: "save", label: "Grabar" };
+  }
+
+  const row = el.closest("tr");
+  if (row) {
+    const text = row.textContent.trim();
+    if (text) return { kind: "row", label: text.slice(0, 80) };
+  }
+
+  const label = title || el.textContent.trim();
+  if (label) return { kind: "button", label: label.slice(0, 60) };
+  return null;
+}
+
+let recordingActive = false;
+const recordedValueByEl = new WeakMap();
+
+function onRecordClick(e) {
+  if (!recordingActive) return;
+  const el = e.target;
+  if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") return; // los inputs se capturan por 'change'
+  const desc = describeClickTarget(el);
+  if (!desc) return;
+  try {
+    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: desc.kind === "save" ? "click" : "click", ...desc } });
+  } catch {
+    // El panel puede no estar escuchando en este instante; se ignora.
+  }
+}
+
+function onRecordChange(e) {
+  if (!recordingActive) return;
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return;
+  if (el.type === "checkbox" || el.type === "radio") {
+    const row = el.closest("tr");
+    const label = row ? row.textContent.trim() : el.getAttribute("title") || el.getAttribute("aria-label") || "";
+    if (!label) return;
+    try {
+      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "check", label: label.slice(0, 80), checked: el.checked } });
+    } catch {
+      /* panel no escuchando */
+    }
+    return;
+  }
+  const desc = describeFieldElement(el);
+  if (!desc) return;
+  // Evita registrar dos veces el mismo valor si el 'change' se dispara más
+  // de una vez sin que el usuario haya vuelto a tocar el campo.
+  if (recordedValueByEl.get(el) === el.value) return;
+  recordedValueByEl.set(el, el.value);
+  try {
+    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "fill", ...desc, value: el.value } });
+  } catch {
+    /* panel no escuchando */
+  }
+}
+
+function startRecording() {
+  if (recordingActive) return;
+  recordingActive = true;
+  document.addEventListener("click", onRecordClick, true);
+  document.addEventListener("change", onRecordChange, true);
+}
+
+function stopRecording() {
+  recordingActive = false;
+  document.removeEventListener("click", onRecordClick, true);
+  document.removeEventListener("change", onRecordChange, true);
+}
+
+/** Ejecuta un paso grabado (reproducción). Reutiliza fieldSelectors,
+ * findClassificationValueInputAsync, SAVE_BUTTON_SELECTORS, etc. — la misma
+ * lógica ya probada del apartado "Modificar material", solo que ahora
+ * parametrizada por lo que quedó grabado en vez de un campo fijo. */
+async function executeRecordedStep(step, overrideValue) {
+  const value = overrideValue !== undefined && overrideValue !== null ? overrideValue : step.value;
+  if (step.action === "fill") {
+    if (step.kind === "field") {
+      const el = findFirstVisible(fieldSelectors(step.tech), (n) => !n.disabled);
+      if (!el) return { ok: false, trace: `No se encontró el campo técnico '${step.tech}'.` };
+      fillAndCommit(el, value, "Tab");
+      return { ok: true };
+    }
+    if (step.kind === "tableField") {
+      const { input, trace } = await findClassificationValueInputAsync(step.label);
+      if (!input) return { ok: false, trace: `No se encontró la fila '${step.label}'. ${trace.join(" | ")}` };
+      fillAndCommit(input, value, "Tab");
+      return { ok: true };
+    }
+    return { ok: false, trace: "Paso 'fill' sin campo reconocible." };
+  }
+  if (step.action === "check") {
+    const xp = `//tr[contains(., ${xpathLiteral(step.label.slice(0, 30))})]//input[@type='checkbox']`;
+    const el = findFirstVisible([{ type: "xpath", value: xp }]);
+    if (!el) return { ok: false, trace: `No se encontró el checkbox de '${step.label}'.` };
+    if (el.checked !== step.checked) el.click();
+    return { ok: true };
+  }
+  if (step.action === "click") {
+    switch (step.kind) {
+      case "tile": {
+        const selectors = [
+          { type: "xpath", value: `//a[contains(@href, ${xpathLiteral(step.hash || "")})]` },
+          { type: "xpath", value: `//*[contains(@aria-label, ${xpathLiteral(step.label || "")})]` },
+        ];
+        const el = findFirstVisible(selectors);
+        if (!el) return { ok: false, trace: `No se encontró el tile '${step.label}'.` };
+        el.click();
+        return { ok: true };
+      }
+      case "tab": {
+        const xp = `//*[contains(@class, 'lsTabStrip')][contains(., ${xpathLiteral(step.label)})]`;
+        const el = findFirstVisible([{ type: "xpath", value: xp }]);
+        if (!el) return { ok: false, trace: `No se encontró la pestaña '${step.label}'.` };
+        el.click();
+        return { ok: true };
+      }
+      case "row": {
+        const prefix = step.label.slice(0, 30);
+        const xp = `//tr[contains(., ${xpathLiteral(prefix)})]`;
+        const el = findFirstVisible([{ type: "xpath", value: xp }]);
+        if (!el) return { ok: false, trace: `No se encontró la fila '${prefix}'.` };
+        el.click();
+        return { ok: true };
+      }
+      case "save": {
+        const el = findFirstVisible(SAVE_BUTTON_SELECTORS);
+        if (!el) return { ok: false, trace: "No se encontró el botón Grabar." };
+        el.click();
+        return { ok: true };
+      }
+      default: {
+        const xp = `//*[contains(@title, ${xpathLiteral(step.label)}) or contains(@aria-label, ${xpathLiteral(step.label)}) or normalize-space(text())=${xpathLiteral(step.label)}]`;
+        const el = findFirstVisible([{ type: "xpath", value: xp }]);
+        if (!el) return { ok: false, trace: `No se encontró el botón '${step.label}'.` };
+        el.click();
+        return { ok: true };
+      }
+    }
+  }
+  return { ok: false, trace: `Acción de paso desconocida: ${step.action}.` };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -477,3 +717,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   });
   return true; // mantiene el canal abierto para la respuesta asíncrona
 });
+
+// Si un frame NUEVO aparece durante una grabación en curso (p.ej. el
+// <iframe> de la transacción que se crea al abrir un tile desde el
+// Launchpad), este frame arranca sin haber recibido el START_RECORDING —
+// por eso se consulta el flag persistido apenas carga, para sumarse solo.
+try {
+  chrome.storage.local.get("macroRecordingActive", (data) => {
+    if (data && data.macroRecordingActive) startRecording();
+  });
+} catch {
+  // chrome.storage no disponible en este contexto; sin grabación entre
+  // navegaciones, pero el resto de la extensión sigue funcionando normal.
+}
