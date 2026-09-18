@@ -527,18 +527,31 @@ function getRowLabelText(row, valueEl) {
   return labelCell ? labelCell.textContent.trim() : null;
 }
 
-/** Identifica un <input>/<textarea> que el usuario acaba de editar:
- * preferencia por etiqueta de fila (más estable en tablas virtualizadas
- * como Clasificación, donde el nombre técnico es el mismo para toda fila),
- * si no hay fila reconocible cae al nombre técnico. */
+/**
+ * Identifica un <input>/<textarea> que el usuario acaba de editar. OJO:
+ * muchas pantallas de SAP usan <table> solo para alinear campos normales
+ * visualmente (no son tablas virtualizadas tipo Clasificación) — tratar
+ * CUALQUIER campo dentro de un <tr> como "fila de característica" hacía
+ * que el propio campo Material se registrara mal como fila "Número de
+ * material" y fallara al reproducir. El discriminador real (confirmado
+ * por inspección) es el atributo `iidx`: SOLO las filas de las tablas
+ * virtualizadas de SAP lo tienen. Por eso el nombre técnico (más
+ * específico y confiable) tiene prioridad siempre que se pueda extraer, y
+ * la etiqueta de fila solo se usa cuando de verdad es una tabla
+ * virtualizada, o como último recurso si no hay nombre técnico.
+ */
 function describeFieldElement(el) {
   const row = el.closest("tr");
-  if (row) {
+  if (row && row.hasAttribute("iidx")) {
     const label = getRowLabelText(row, el);
     if (label) return { kind: "tableField", label };
   }
   const tech = extractTechnicalField(el);
   if (tech) return { kind: "field", tech };
+  if (row) {
+    const label = getRowLabelText(row, el);
+    if (label) return { kind: "tableField", label };
+  }
   return null;
 }
 
@@ -675,6 +688,11 @@ function startRecording() {
   recordingActive = true;
   document.addEventListener("click", onRecordClick, true);
   document.addEventListener("change", onRecordChange, true);
+  // Respaldo de 'change': algunos controles de SAP no lo disparan de forma
+  // nativa al salir del campo, pero sí pierden el foco. onRecordChange ya
+  // deduplica por valor (recordedValueByEl), así que no hay riesgo de
+  // registrar el mismo dato dos veces si ambos eventos llegan a disparar.
+  document.addEventListener("focusout", onRecordChange, true);
   document.addEventListener("keydown", onRecordKeydown, true);
 }
 
@@ -682,6 +700,7 @@ function stopRecording() {
   recordingActive = false;
   document.removeEventListener("click", onRecordClick, true);
   document.removeEventListener("change", onRecordChange, true);
+  document.removeEventListener("focusout", onRecordChange, true);
   document.removeEventListener("keydown", onRecordKeydown, true);
 }
 

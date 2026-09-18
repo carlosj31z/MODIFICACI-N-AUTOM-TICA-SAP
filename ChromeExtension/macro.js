@@ -49,6 +49,7 @@ const macroState = {
   steps: [],
   stopFlag: false,
   recordTabId: null,
+  recordInterval: null,
 };
 
 // ---------------------------------------------------------------
@@ -213,6 +214,18 @@ macroEls.recordBtn.addEventListener("click", async () => {
   macroState.recordTabId = tab.id;
   macroState.recording = true;
   await broadcastOnce(tab.id, { type: "START_RECORDING" });
+  // Reenvía START_RECORDING cada segundo mientras se graba: cuando se abre
+  // un tile, SAP crea un <iframe> nuevo para la transacción, y ese frame
+  // recién nace sin haber recibido la orden — su propio content.js consulta
+  // chrome.storage.local para sumarse solo, pero eso es async y si el
+  // usuario escribe muy rápido puede perderse el arranque. Este respaldo
+  // activo llega directo, sin depender de esa carrera.
+  if (macroState.recordInterval) clearInterval(macroState.recordInterval);
+  macroState.recordInterval = setInterval(() => {
+    if (macroState.recording && macroState.recordTabId) {
+      broadcastOnce(macroState.recordTabId, { type: "START_RECORDING" }).catch(() => {});
+    }
+  }, 1000);
   macroEls.recordBtn.disabled = true;
   macroEls.stopBtn.disabled = false;
   macroLog(`Grabando en: ${tab.title || tab.url}. Trabaja normal en SAP (MM01/MM02, cualquier vista) — cada click y campo queda registrado abajo.`);
@@ -220,6 +233,10 @@ macroEls.recordBtn.addEventListener("click", async () => {
 
 macroEls.stopBtn.addEventListener("click", async () => {
   macroState.recording = false;
+  if (macroState.recordInterval) {
+    clearInterval(macroState.recordInterval);
+    macroState.recordInterval = null;
+  }
   if (macroState.recordTabId) {
     await broadcastOnce(macroState.recordTabId, { type: "STOP_RECORDING" });
   }

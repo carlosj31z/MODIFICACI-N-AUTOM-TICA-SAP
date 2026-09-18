@@ -143,6 +143,19 @@ del Enter (y detecta Ctrl+S como atajo de Grabar), así que ya no hace falta
 evitarlos — pero si una grabación te queda con menos pasos de los que
 esperabas, revisa si confirmaste algún campo con una tecla/atajo distinto.
 
+**v2.3.0 — corrección importante**: muchas pantallas de SAP usan `<table>`
+solo para alinear campos normales visualmente (no son tablas virtualizadas
+tipo Clasificación). Antes, cualquier campo dentro de un `<tr>` —incluido el
+propio campo Material— se grababa mal como "fila de característica" y
+fallaba al reproducir (`no encontrado`). Ahora el nombre técnico tiene
+prioridad siempre que se pueda extraer, y la etiqueta de fila solo se usa
+para tablas realmente virtualizadas (identificadas por el atributo `iidx`,
+exclusivo de esos controles) o como último recurso. También se agregó un
+respaldo `focusout` junto a `change`, y la grabación reenvía la orden de
+inicio cada segundo mientras está activa (cubre el caso de un `<iframe>`
+nuevo que aparece justo cuando ya estás escribiendo, antes de que le llegue
+su propio aviso).
+
 ### Cómo identifica un campo "cualquiera" sin que se le programe a mano
 
 - Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)
