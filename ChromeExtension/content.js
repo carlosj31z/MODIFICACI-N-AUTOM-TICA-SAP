@@ -621,17 +621,68 @@ function onRecordChange(e) {
   }
 }
 
+/**
+ * SAP GUI for HTML procesa la tecla Enter directamente (dispara su propio
+ * round-trip/recarga de pantalla) y a veces eso interrumpe el ciclo normal
+ * de blur→'change' del navegador antes de que llegue a dispararse — por
+ * eso un campo confirmado con Enter (en vez de Tab o click en otro lado)
+ * podía perderse en la grabación. Aquí se captura el valor en el momento
+ * del keydown, ANTES de que SAP reaccione. También se detecta Ctrl+S como
+ * atajo de Grabar, por si el usuario no clica el botón con el mouse.
+ */
+function onRecordKeydown(e) {
+  if (!recordingActive) return;
+  const el = e.target;
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+    try {
+      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "click", kind: "save", label: "Grabar (Ctrl+S)" } });
+    } catch {
+      /* panel no escuchando */
+    }
+    return;
+  }
+
+  if (e.key !== "Enter") return;
+
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    if (el.type === "checkbox" || el.type === "radio") return; // esos van por 'change'
+    const desc = describeFieldElement(el);
+    if (!desc) return;
+    if (recordedValueByEl.get(el) === el.value) return; // ya registrado (p.ej. por 'change')
+    recordedValueByEl.set(el, el.value);
+    try {
+      chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "fill", ...desc, value: el.value } });
+    } catch {
+      /* panel no escuchando */
+    }
+    return;
+  }
+
+  // Enter fuera de un campo de texto (p.ej. una fila de diálogo con foco):
+  // equivale a un click sobre lo que tenga el foco en ese momento.
+  const desc = describeClickTarget(el);
+  if (!desc) return;
+  try {
+    chrome.runtime.sendMessage({ type: "RECORDED_STEP", step: { action: "click", ...desc } });
+  } catch {
+    /* panel no escuchando */
+  }
+}
+
 function startRecording() {
   if (recordingActive) return;
   recordingActive = true;
   document.addEventListener("click", onRecordClick, true);
   document.addEventListener("change", onRecordChange, true);
+  document.addEventListener("keydown", onRecordKeydown, true);
 }
 
 function stopRecording() {
   recordingActive = false;
   document.removeEventListener("click", onRecordClick, true);
   document.removeEventListener("change", onRecordChange, true);
+  document.removeEventListener("keydown", onRecordKeydown, true);
 }
 
 /** Ejecuta un paso grabado (reproducción). Reutiliza fieldSelectors,

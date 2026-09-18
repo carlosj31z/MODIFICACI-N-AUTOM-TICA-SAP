@@ -135,6 +135,14 @@ correcta — lo único que NO hace es escribir datos ni guardar. Es la forma
 recomendada de validar una plantilla nueva antes de correrla en serio sobre
 una lista de materiales.
 
+**Confirma un campo con Tab o click, no solo con Enter**: SAP GUI for HTML
+procesa la tecla Enter directamente (dispara su propio round-trip) y eso
+puede saltarse el evento `change` normal del navegador antes de llegar a
+dispararse. Desde v2.2.1 la grabadora también captura el valor en el momento
+del Enter (y detecta Ctrl+S como atajo de Grabar), así que ya no hace falta
+evitarlos — pero si una grabación te queda con menos pasos de los que
+esperabas, revisa si confirmaste algún campo con una tecla/atajo distinto.
+
 ### Cómo identifica un campo "cualquiera" sin que se le programe a mano
 
 - Campos normales: extrae el nombre técnico (ej. `RMMG1-MATNR`, `RCTMS-MWERT`)
