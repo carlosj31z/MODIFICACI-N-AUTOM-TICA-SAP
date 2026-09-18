@@ -1,0 +1,206 @@
+body {
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  margin: 0;
+  padding: 12px;
+  color: #1a1a1a;
+}
+
+h1 { font-size: 16px; margin: 0; }
+h2 { font-size: 13px; margin: 0 0 8px; color: #333; }
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.reload-btn {
+  border: 1px solid #999;
+  background: #fff;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.reload-btn:hover { background: #eee; }
+
+.panel {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+
+.tab-status {
+  font-size: 10px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: -6px 0 8px;
+  cursor: default;
+}
+.tab-status.tab-warning { color: #b06a00; font-weight: 600; }
+.tab-status.tab-missing { color: #c0392b; font-weight: 600; }
+
+.config-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  flex: 1 1 140px;
+}
+.config-field select,
+.config-field input[type="text"] {
+  padding: 5px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+}
+.config-fixed { flex: 0 0 auto; }
+.transaccion-fixed {
+  padding: 5px 6px;
+  color: #888;
+  font-weight: 600;
+}
+
+.field {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.field input[type="file"],
+.field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.hint-text {
+  font-size: 11px;
+  color: #555;
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+.hint-compact {
+  font-size: 10px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.checkbox { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+
+.buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+
+.execute-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.execute-row .checkbox { margin-bottom: 0; justify-self: start; }
+.execute-row .buttons-inline { margin-bottom: 0; justify-self: center; grid-column: 2; }
+
+button, .file-label {
+  cursor: pointer;
+  border: 1px solid #999;
+  background: #fff;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  display: inline-block;
+}
+button:hover, .file-label:hover { background: #eee; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #ddd;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+th, td {
+  border-bottom: 1px solid #eee;
+  padding: 4px 6px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+th { position: sticky; top: 0; background: #f0f0f0; z-index: 1; }
+
+/* --- Grilla editable de carga --- */
+.grid-wrap { max-height: 440px; }
+
+#grid td { max-width: none; overflow: visible; }
+
+#grid input[type="text"],
+#grid select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 3px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 3px;
+}
+#grid input[type="text"]:hover,
+#grid select:hover { border-color: #ccc; }
+#grid input[type="text"]:focus,
+#grid select:focus {
+  border-color: #0b62d6;
+  background: #fff;
+  outline: none;
+}
+#grid input[type="text"]::placeholder { color: #b56a6a; font-style: italic; }
+
+.row-del-btn {
+  border: none;
+  background: transparent;
+  color: #b00;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.row-del-btn:hover { background: #fee; border-radius: 3px; }
+
+.estado-cell { font-weight: 600; }
+.mensaje-cell { color: #555; white-space: normal; }
+
+tr.estado-pendiente .estado-cell { color: #888; }
+tr.estado-procesado .estado-cell { color: #157a15; }
+tr.estado-error { background: #fff2f2; }
+tr.estado-error .estado-cell { color: #c0392b; }
+
+#log {
+  overflow: auto;
+  background: #111;
+  color: #d8d8d8;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  transition: max-height 0.15s ease;
+}
+/* Colapsado por defecto: una sola fila visible (la última línea, gracias
+   al auto-scroll al fondo en cada log()); se expande solo ante un error. */
+#log.log-collapsed { max-height: 22px; }
+#log.log-expanded { max-height: 220px; }

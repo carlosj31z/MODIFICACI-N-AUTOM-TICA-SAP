@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Modificar material</title>
+<link rel="icon" href="icons/icon32.png" />
+<link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="title-row">
+    <h1>Modificar material</h1>
+    <button id="reloadExtBtn" class="reload-btn" title="Recargar extensión (después de un git pull). Recuerda refrescar también la pestaña de SAP.">🔄</button>
+  </div>
+  <div id="tabInfo" class="tab-status">Detectando pestaña activa de SAP…</div>
+
+  <section class="panel">
+    <h2>1. Configuración de esta carga (aplica a todas las filas)</h2>
+    <div class="config-grid">
+      <label class="config-field">
+        Vista
+        <select id="globalVista"></select>
+      </label>
+      <label class="config-field">
+        Campo técnico
+        <input type="text" id="globalCampoTecnico" placeholder="ej. MSTAE, EVENTO" />
+      </label>
+      <div class="config-field config-fixed">
+        Transacción
+        <div class="transaccion-fixed">MM02</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Materiales a procesar</h2>
+    <p class="hint-text hint-compact">
+      Pega filas de Excel (Material, Centro, Valor), edítalas a mano, o carga un .xlsx.
+      Valor vacío = se borra en SAP.
+    </p>
+    <div class="buttons">
+      <button id="addRowBtn">+ Agregar fila</button>
+      <button id="clearGridBtn">🗑 Vaciar tabla</button>
+      <label class="file-label" for="fileInput">📎 Cargar Excel (.xlsx)</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" hidden />
+    </div>
+    <div class="table-wrap grid-wrap">
+      <table id="grid">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Material</th>
+            <th>Centro</th>
+            <th>Valor</th>
+            <th>Estado</th>
+            <th>Mensaje</th>
+          </tr>
+        </thead>
+        <tbody id="gridBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>3. Ejecutar</h2>
+    <div class="execute-row">
+      <label class="checkbox">
+        <input type="checkbox" id="detenerCheckbox" />
+        Detener en el primer error
+      </label>
+      <div class="buttons buttons-inline">
+        <button id="startBtn">▶ Iniciar</button>
+        <button id="stopBtn">⏹ Detener</button>
+        <button id="retryBtn">↻ Reintentar errores</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Registro</h2>
+    <pre id="log" class="log-collapsed"></pre>
+  </section>
+
+  <script src="lib/xlsx.mini.min.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
